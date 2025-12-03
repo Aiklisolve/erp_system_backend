@@ -1,5 +1,4 @@
 import { query } from '../config/database.js';
-import { v4 as uuidv4 } from 'uuid';
 
 const OTP_TABLE = 'otp_verifications';
 
@@ -8,24 +7,27 @@ function generateOtpCode() {
 }
 
 export async function sendOtp({ userId, otpType, method, value }) {
-  const otpId = uuidv4();
   const code = generateOtpCode();
   const expiresInSeconds = 600; // 10 minutes
   const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-  await query(
+  const result = await query(
     `
     INSERT INTO ${OTP_TABLE}
-    (id, user_id, otp_code, otp_type, contact_method, contact_value, expires_at, is_used, created_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,false, NOW())
+    (user_id, otp_code, otp_type, contact_method, contact_value, expires_at, is_used, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, false, NOW())
+    RETURNING id
     `,
-    [otpId, userId, code, otpType, method, value, expiresAt]
+    [userId, code, otpType, method, value, expiresAt]
   );
+
+  const otpId = result.rows[0].id;
 
   // here you call email.service or sms.service based on method
   console.log(`Send OTP ${code} to ${value} via ${method}`);
 
   return {
+    code,
     otpId,
     expiresIn: expiresInSeconds,
     contactValue: value

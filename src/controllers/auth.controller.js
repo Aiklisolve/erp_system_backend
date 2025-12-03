@@ -57,10 +57,10 @@ export async function register(req, res, next) {
     await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
-      (id, user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
-      VALUES ($1,$2,$3,$4, NOW() + interval '1 hour', NOW(), $5, $6, true)
+      (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
+      VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
       `,
-      [uuidv4(), user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
+      [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
     );
 
     return res.status(201).json({
@@ -81,7 +81,7 @@ export async function register(req, res, next) {
 export async function login(req, res, next) {
   try {
     const { email, password } = req.body;
-
+    
     const result = await query(
       `
       SELECT id, email, password_hash, full_name, role, department, profile_image_url
@@ -99,6 +99,7 @@ export async function login(req, res, next) {
     }
 
     const user = result.rows[0];
+
     const match = await comparePassword(password, user.password_hash);
     if (!match) {
       return res.status(401).json({
@@ -122,10 +123,10 @@ export async function login(req, res, next) {
     await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
-      (id, user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
-      VALUES ($1,$2,$3,$4, NOW() + interval '1 hour', NOW(), $5, $6, true)
+      (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
+      VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
       `,
-      [uuidv4(), user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
+      [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
     );
 
     delete user.password_hash;
@@ -148,12 +149,31 @@ export async function login(req, res, next) {
 // 1.3 Login with OTP - Send
 export async function sendLoginOtp(req, res, next) {
   try {
-    const { email, method } = req.body;
+    const { email, phone, method } = req.body;
 
-    const userRes = await query(
-      `SELECT id, email FROM ${USER_TABLE} WHERE email = $1 AND is_active = true`,
-      [email]
-    );
+    // Determine which field to use based on method or provided field
+    let userRes;
+    let contactValue;
+
+    if (email) {
+      userRes = await query(
+        `SELECT id, email, phone FROM ${USER_TABLE} WHERE email = $1 AND is_active = true`,
+        [email]
+      );
+      contactValue = email;
+    } else if (phone) {
+      userRes = await query(
+        `SELECT id, email, phone FROM ${USER_TABLE} WHERE phone = $1 AND is_active = true`,
+        [phone]
+      );
+      contactValue = phone;
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Either email or phone is required'
+      });
+    }
+
     if (userRes.rowCount === 0) {
       return res.status(404).json({
         success: false,
@@ -163,20 +183,21 @@ export async function sendLoginOtp(req, res, next) {
 
     const user = userRes.rows[0];
 
-    const { otpId, expiresIn, contactValue } = await sendOtp({
+    const { otpId, expiresIn, contactValue: sentTo, code } = await sendOtp({
       userId: user.id,
       otpType: 'LOGIN',
       method,
-      value: email
+      value: contactValue
     });
 
     return res.json({
       success: true,
       message: 'OTP sent successfully',
       data: {
+        otp: code,
         otp_id: otpId,
         expires_in: expiresIn,
-        sent_to: contactValue,
+        sent_to: sentTo,
         method
       }
     });
@@ -188,12 +209,27 @@ export async function sendLoginOtp(req, res, next) {
 // 1.4 Login with OTP - Verify
 export async function verifyLoginOtp(req, res, next) {
   try {
-    const { email, otp_code, otp_id } = req.body;
+    const { email, phone, otp_code, otp_id } = req.body;
 
-    const userRes = await query(
-      `SELECT id, email, full_name, role FROM ${USER_TABLE} WHERE email = $1`,
-      [email]
-    );
+    let userRes;
+
+    if (email) {
+      userRes = await query(
+        `SELECT id, email, full_name, role, department, profile_image_url FROM ${USER_TABLE} WHERE email = $1`,
+        [email]
+      );
+    } else if (phone) {
+      userRes = await query(
+        `SELECT id, email, full_name, role, department, profile_image_url FROM ${USER_TABLE} WHERE phone = $1`,
+        [phone]
+      );
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Either email or phone is required'
+      });
+    }
+
     if (userRes.rowCount === 0) {
       return res.status(404).json({
         success: false,
@@ -227,10 +263,10 @@ export async function verifyLoginOtp(req, res, next) {
     await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
-      (id, user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
-      VALUES ($1,$2,$3,$4, NOW() + interval '1 hour', NOW(), $5, $6, true)
+      (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
+      VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
       `,
-      [uuidv4(), user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
+      [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
     );
 
     return res.json({
@@ -351,28 +387,49 @@ export async function changePasswordWithCurrent(req, res, next) {
 export async function sendChangePasswordOtp(req, res, next) {
   try {
     const userId = req.user.user_id;
-    const { method } = req.body;
+    const { method, email, phone } = req.body;
 
     const userRes = await query(
-      `SELECT id, email FROM ${USER_TABLE} WHERE id = $1`,
+      `SELECT id, email, phone FROM ${USER_TABLE} WHERE id = $1`,
       [userId]
     );
     const user = userRes.rows[0];
 
-    const { otpId, expiresIn, contactValue } = await sendOtp({
+    // Determine contact value: use provided email/phone, or user's email/phone
+    let contactValue;
+    if (email) {
+      contactValue = email;
+    } else if (phone) {
+      contactValue = phone;
+    } else if (method === 'SMS' || method === 'PHONE') {
+      contactValue = user.phone;
+    } else {
+      contactValue = user.email;
+    }
+
+    if (!contactValue) {
+      return res.status(400).json({
+        success: false,
+        message: `User doesn't have a ${method === 'SMS' || method === 'PHONE' ? 'phone number' : 'email'} registered`
+      });
+    }
+
+    const { otpId, expiresIn, contactValue: sentTo, code } = await sendOtp({
       userId,
       otpType: 'PASSWORD_RESET',
       method,
-      value: user.email
+      value: contactValue
     });
 
     return res.json({
       success: true,
       message: 'OTP sent successfully',
       data: {
+        otp: code,
         otp_id: otpId,
         expires_in: expiresIn,
-        sent_to: contactValue
+        sent_to: sentTo,
+        method
       }
     });
   } catch (err) {
