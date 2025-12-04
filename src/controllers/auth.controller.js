@@ -54,22 +54,27 @@ export async function register(req, res, next) {
       user_id: user.id
     });
 
-    await query(
+    const sessionResult = await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
       (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
       VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
+      RETURNING id
       `,
       [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
     );
+
+    const sessionId = sessionResult.rows[0].id;
 
     return res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
         user,
+        session_id: sessionId,
         token: accessToken,
-        refresh_token: refreshToken
+        refresh_token: refreshToken,
+        expires_in: 3600
       }
     });
   } catch (err) {
@@ -120,14 +125,17 @@ export async function login(req, res, next) {
     });
     const refreshToken = signRefreshToken({ user_id: user.id });
 
-    await query(
+    const sessionResult = await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
       (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
       VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
+      RETURNING id
       `,
       [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
     );
+
+    const sessionId = sessionResult.rows[0].id;
 
     delete user.password_hash;
 
@@ -136,6 +144,7 @@ export async function login(req, res, next) {
       message: 'Login successful',
       data: {
         user,
+        session_id: sessionId,
         token: accessToken,
         refresh_token: refreshToken,
         expires_in: 3600
@@ -260,20 +269,24 @@ export async function verifyLoginOtp(req, res, next) {
     });
     const refreshToken = signRefreshToken({ user_id: user.id });
 
-    await query(
+    const sessionResult = await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
       (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
       VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
+      RETURNING id
       `,
       [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
     );
+
+    const sessionId = sessionResult.rows[0].id;
 
     return res.json({
       success: true,
       message: 'OTP verified successfully',
       data: {
         user,
+        session_id: sessionId,
         token: accessToken,
         refresh_token: refreshToken,
         expires_in: 3600
