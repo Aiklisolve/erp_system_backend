@@ -7,6 +7,7 @@ import { config } from './config/env.js';
 // Core routes
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
+import sessionRoutes from './routes/session.routes.js';
 import crmRoutes from './routes/crm.routes.js';
 
 // New module routes (CJS is fine, Node will treat module.exports as default)
@@ -34,6 +35,7 @@ const base = `/api/${config.apiVersion}`;
 // Auth & user
 app.use(`${base}/auth`, authRoutes);
 app.use(`${base}/users`, userRoutes);
+app.use(`${base}/sessions`, sessionRoutes);
 app.use(`${base}/crm`, crmRoutes);
 
 // Later, when you have HR/Tasks route files ready:
