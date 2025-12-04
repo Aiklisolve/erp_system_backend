@@ -2,13 +2,42 @@
 import { query } from '../config/database.js';
 import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 
+// Helper function to validate and fix dates
+function validateAndFixDate(dateString) {
+  if (!dateString) return null;
+  
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      return null; // Invalid date
+    }
+    
+    // Check if the date string has an invalid day (e.g., 2025-11-31)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+    
+    // If day exceeds the last day of month, adjust to last day
+    if (day > lastDayOfMonth) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(lastDayOfMonth).padStart(2, '0')}`;
+    }
+    
+    return dateString;
+  } catch (error) {
+    return null;
+  }
+}
+
 // ---------- 🧾 TRANSACTIONS ----------
 
 // GET /api/v1/finance/transactions
 export async function listTransactions(req, res, next) {
   try {
     const { page, limit, offset } = getPagination(req);
-    const { search, status, transaction_type, from_date, to_date } = req.query;
+    let { search, status, transaction_type, from_date, to_date } = req.query;
+
+    // Validate and fix dates
+    from_date = validateAndFixDate(from_date);
+    to_date = validateAndFixDate(to_date);
 
     const conditions = [];
     const params = [];
