@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import { config } from './config/env.js';
+import { httpLogger } from './middleware/logger.js';
 
 // Core routes
 import authRoutes from './routes/auth.routes.js';
@@ -29,6 +30,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
+app.use(httpLogger); // Custom HTTP logger to file
 
 const base = `/api/${config.apiVersion}`;
 

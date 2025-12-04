@@ -72,4 +72,49 @@ router.delete(
   financeController.deleteInvoice
 );
 
+// 💼 Finance Accounts
+router.get(
+  '/accounts',
+  // authorize('ADMIN', 'FINANCE_MANAGER'),
+  financeController.listFinanceAccounts
+);
+
+router.post(
+  '/accounts',
+  // authorize('ADMIN', 'FINANCE_MANAGER'),
+  financeController.createFinanceAccount
+);
+
+router.get(
+  '/accounts/:id',
+  // authorize('ADMIN', 'FINANCE_MANAGER'),
+  financeController.getFinanceAccountById
+);
+
+router.put(
+  '/accounts/:id',
+  // authorize('ADMIN', 'FINANCE_MANAGER'),
+  financeController.updateFinanceAccount
+);
+
+router.delete(
+  '/accounts/:id',
+  // authorize('ADMIN'),
+  financeController.deleteFinanceAccount
+);
+
+router.get('/received-payments', financeController.listReceivedPayments);
+router.post('/received-payments', financeController.createReceivedPayment);
+router.get('/received-payments/:id', financeController.getReceivedPaymentById);
+router.put('/received-payments/:id', financeController.updateReceivedPayment);
+router.delete('/received-payments/:id', financeController.deleteReceivedPayment);
+
+// 🔄 Transfer Approvals
+router.get('/transfer-approvals/summary', financeController.getTransferApprovalsSummary);
+router.get('/transfer-approvals', financeController.listTransferApprovals);
+router.post('/transfer-approvals', financeController.createTransferApproval);
+router.get('/transfer-approvals/:id', financeController.getTransferApprovalById);
+router.post('/transfer-approvals/:id/approve', financeController.approveTransfer);
+router.post('/transfer-approvals/:id/reject', financeController.rejectTransfer);
+ 
 export default router;
