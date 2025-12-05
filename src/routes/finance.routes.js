@@ -10,6 +10,9 @@ const router = Router();
 // All finance routes require authentication
 router.use(authMiddleware);
 
+// 📊 Dashboard
+router.get('/dashboard/stats', financeController.getDashboardStats);
+
 // 💰 Transactions
 router.get(
   '/transactions',

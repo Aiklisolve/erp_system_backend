@@ -42,7 +42,7 @@ export async function listPurchaseOrders(req, res, next) {
 
     if (search) {
       conditions.push(
-        `(po_number ILIKE $${idx} OR supplier_name ILIKE $${idx} OR notes ILIKE $${idx})`
+        `(po_number ILIKE $${idx} OR notes ILIKE $${idx})`
       );
       params.push(`%${search}%`);
       idx++;
@@ -110,7 +110,7 @@ export async function getPurchaseOrderById(req, res, next) {
       SELECT *
       FROM purchase_order_items
       WHERE purchase_order_id = $1
-      ORDER BY line_number ASC
+      ORDER BY id ASC
       `,
       [id]
     );
@@ -132,36 +132,68 @@ export async function createPurchaseOrder(req, res, next) {
   try {
     const { items = [], ...poData } = req.body;
 
+    // Map po_date to order_date if provided
+    const orderDate = poData.po_date || poData.order_date;
+
+    // Validate required fields
+    if (!poData.supplier_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'supplier_id is required'
+      });
+    }
+    if (!poData.subtotal) {
+      return res.status(400).json({
+        success: false,
+        message: 'subtotal is required'
+      });
+    }
+    if (!poData.total_amount) {
+      return res.status(400).json({
+        success: false,
+        message: 'total_amount is required'
+      });
+    }
+
     const poRes = await query(
       `
       INSERT INTO purchase_orders (
         po_number,
         supplier_id,
-        supplier_name,
         order_date,
         expected_delivery_date,
-        status,
+        actual_delivery_date,
+        subtotal,
+        tax_amount,
+        shipping_cost,
         total_amount,
-        currency,
+        status,
+        payment_terms,
+        delivery_address,
         notes,
         created_by,
-        created_at
+        created_at,
+        updated_at
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW()
       )
       RETURNING *
       `,
       [
         poData.po_number,
         poData.supplier_id,
-        poData.supplier_name,
-        poData.order_date,
+        orderDate,
         poData.expected_delivery_date,
-        poData.status,
+        poData.actual_delivery_date || null,
+        poData.subtotal,
+        poData.tax_amount || 0,
+        poData.shipping_cost || 0,
         poData.total_amount,
-        poData.currency,
-        poData.notes,
+        poData.status || 'DRAFT',
+        poData.payment_terms || null,
+        poData.delivery_address || null,
+        poData.notes || null,
         req.user?.user_id || null
       ]
     );
@@ -175,17 +207,18 @@ export async function createPurchaseOrder(req, res, next) {
       const params = [];
       let idx = 1;
 
-      items.forEach((item, i) => {
+      items.forEach((item) => {
+        const lineTotal = (item.quantity * item.unit_price) * (1 + (item.tax_rate || 0) / 100);
         values.push(
           `($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`
         );
         params.push(
           po.id,
-          i + 1,
           item.product_id,
-          item.description,
           item.quantity,
-          item.unit_price
+          item.unit_price,
+          item.tax_rate || 0,
+          lineTotal
         );
       });
 
@@ -193,11 +226,11 @@ export async function createPurchaseOrder(req, res, next) {
         `
         INSERT INTO purchase_order_items (
           purchase_order_id,
-          line_number,
           product_id,
-          description,
           quantity,
-          unit_price
+          unit_price,
+          tax_rate,
+          line_total
         )
         VALUES ${values.join(', ')}
         RETURNING *
@@ -227,30 +260,43 @@ export async function updatePurchaseOrder(req, res, next) {
     const { id } = req.params;
     const { items, ...poData } = req.body;
 
+    // Map po_date to order_date if provided
+    const orderDate = poData.po_date || poData.order_date;
+
     const poRes = await query(
       `
       UPDATE purchase_orders
       SET
-        supplier_id             = COALESCE($1, supplier_id),
-        supplier_name           = COALESCE($2, supplier_name),
+        po_number               = COALESCE($1, po_number),
+        supplier_id             = COALESCE($2, supplier_id),
         order_date              = COALESCE($3, order_date),
         expected_delivery_date  = COALESCE($4, expected_delivery_date),
-        status                  = COALESCE($5, status),
-        total_amount            = COALESCE($6, total_amount),
-        currency                = COALESCE($7, currency),
-        notes                   = COALESCE($8, notes),
+        actual_delivery_date    = COALESCE($5, actual_delivery_date),
+        subtotal                = COALESCE($6, subtotal),
+        tax_amount              = COALESCE($7, tax_amount),
+        shipping_cost           = COALESCE($8, shipping_cost),
+        total_amount            = COALESCE($9, total_amount),
+        status                  = COALESCE($10, status),
+        payment_terms           = COALESCE($11, payment_terms),
+        delivery_address        = COALESCE($12, delivery_address),
+        notes                   = COALESCE($13, notes),
         updated_at              = NOW()
-      WHERE id = $9
+      WHERE id = $14
       RETURNING *
       `,
       [
+        poData.po_number,
         poData.supplier_id,
-        poData.supplier_name,
-        poData.order_date,
+        orderDate,
         poData.expected_delivery_date,
-        poData.status,
+        poData.actual_delivery_date,
+        poData.subtotal,
+        poData.tax_amount,
+        poData.shipping_cost,
         poData.total_amount,
-        poData.currency,
+        poData.status,
+        poData.payment_terms,
+        poData.delivery_address,
         poData.notes,
         id
       ]
@@ -282,17 +328,18 @@ export async function updatePurchaseOrder(req, res, next) {
         const params = [];
         let idx = 1;
 
-        items.forEach((item, i) => {
+        items.forEach((item) => {
+          const lineTotal = (item.quantity * item.unit_price) * (1 + (item.tax_rate || 0) / 100);
           values.push(
             `($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`
           );
           params.push(
             id,
-            i + 1,
             item.product_id,
-            item.description,
             item.quantity,
-            item.unit_price
+            item.unit_price,
+            item.tax_rate || 0,
+            lineTotal
           );
         });
 
@@ -300,11 +347,11 @@ export async function updatePurchaseOrder(req, res, next) {
           `
           INSERT INTO purchase_order_items (
             purchase_order_id,
-            line_number,
             product_id,
-            description,
             quantity,
-            unit_price
+            unit_price,
+            tax_rate,
+            line_total
           )
           VALUES ${values.join(', ')}
           RETURNING *
@@ -322,7 +369,7 @@ export async function updatePurchaseOrder(req, res, next) {
         SELECT *
         FROM purchase_order_items
         WHERE purchase_order_id = $1
-        ORDER BY line_number ASC
+        ORDER BY id ASC
         `,
         [id]
       );
