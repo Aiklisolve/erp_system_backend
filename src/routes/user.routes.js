@@ -6,8 +6,18 @@ import multer from 'multer';
 const upload = multer({ dest: 'uploads/' });
 const router = Router();
 
-router.get('/me', authMiddleware, UserController.getMe);
-router.put('/me', authMiddleware, UserController.updateMe);
-router.post('/me/avatar', authMiddleware, upload.single('file'), UserController.uploadAvatar);
+// All routes require authentication
+router.use(authMiddleware);
+
+// Current user profile (must come before /:id)
+router.get('/me', UserController.getMe);
+router.put('/me', UserController.updateMe);
+router.post('/me/avatar', upload.single('file'), UserController.uploadAvatar);
+
+// List users
+router.get('/', UserController.listUsers);
+
+// Get user by ID
+router.get('/:id', UserController.getUserById);
 
 export default router;

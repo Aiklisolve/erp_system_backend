@@ -1,5 +1,5 @@
 import { query } from '../config/database.js';
-import { getPagination } from '../utils/pagination.js';
+import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 
 // 3.x ERP USERS (employees in CRM module)
 export async function listErpUsers(req, res, next) {
@@ -198,7 +198,7 @@ export async function deleteErpUser(req, res, next) {
 // 4.x CUSTOMERS
 export async function listCustomers(req, res, next) {
   try {
-    const { page, limit, offset } = getPaginationParams(req);
+    const { page, limit, offset } = getPagination(req, 20, 1000);
     const { search, segment } = req.query;
 
     const conditions = [];
@@ -224,9 +224,9 @@ export async function listCustomers(req, res, next) {
       FROM customers
       ${where}
       ORDER BY created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
+      LIMIT $${idx} OFFSET $${idx + 1}
       `,
-      params
+      [...params, limit, offset]
     );
 
     const countRes = await query(
@@ -234,20 +234,38 @@ export async function listCustomers(req, res, next) {
       params
     );
 
-    const totalItems = countRes.rows[0].count;
-    const totalPages = Math.ceil(totalItems / limit);
+    const totalItems = countRes.rows[0]?.count || 0;
 
     return res.json({
       success: true,
       data: {
         customers: dataRes.rows,
-        pagination: {
-          current_page: page,
-          total_pages: totalPages,
-          total_items: totalItems,
-          items_per_page: limit
-        }
+        pagination: buildPaginationMeta(page, limit, totalItems)
       }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCustomerById(req, res, next) {
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `SELECT * FROM customers WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: result.rows[0]
     });
   } catch (err) {
     next(err);
