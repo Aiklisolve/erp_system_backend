@@ -126,8 +126,8 @@ export async function createProduct(req, res, next) {
         `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
       );
       const nextId = seqRes.rows[0].next_id;
-      // Generate SKU in format: SKU-XXXX (e.g., SKU-0001)
-      productCode = `SKU-${String(nextId).padStart(4, '0')}`;
+      // Generate SKU in format: SKU-1, SKU-2, etc. (no zero padding)
+      productCode = `SKU-${nextId}`;
     }
 
     const insertRes = await query(
@@ -1150,6 +1150,119 @@ export async function createAssignment(req, res, next) {
     return res.status(201).json({
       success: true,
       message: 'Inventory assigned successfully',
+      data: assignment
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// PUT /api/v1/inventory/assignments/:id
+export async function updateAssignment(req, res, next) {
+  try {
+    const { id } = req.params;
+    const body = req.body;
+
+    // Get current assignment to calculate quantity difference
+    const currentRes = await query(
+      `SELECT * FROM inventory_assignments WHERE id = $1`,
+      [id]
+    );
+
+    if (currentRes.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Assignment not found'
+      });
+    }
+
+    const currentAssignment = currentRes.rows[0];
+    const oldQuantity = currentAssignment.quantity;
+    const newQuantity = body.quantity || oldQuantity;
+    const quantityDiff = newQuantity - oldQuantity;
+
+    // Update the assignment
+    const updateRes = await query(
+      `
+      UPDATE inventory_assignments
+      SET
+        quantity = COALESCE($1, quantity),
+        date_of_use = COALESCE($2, date_of_use),
+        reason_notes = COALESCE($3, reason_notes)
+      WHERE id = $4
+      RETURNING *
+      `,
+      [
+        body.quantity,
+        body.date_of_use,
+        body.reason_notes,
+        id
+      ]
+    );
+
+    const assignment = updateRes.rows[0];
+
+    // Update inventory stock if quantity changed
+    if (quantityDiff !== 0) {
+      const stockRes = await query(
+        `
+        SELECT * FROM inventory_stock 
+        WHERE product_id = $1
+        LIMIT 1
+        `,
+        [currentAssignment.product_id]
+      );
+
+      if (stockRes.rowCount > 0) {
+        const stock = stockRes.rows[0];
+        // If quantity increased, reduce stock; if decreased, add back stock
+        const newOnHand = Math.max(0, (stock.quantity_on_hand || 0) - quantityDiff);
+        const newAvailable = Math.max(0, (stock.quantity_available || 0) - quantityDiff);
+
+        await query(
+          `
+          UPDATE inventory_stock
+          SET
+            quantity_on_hand = $1,
+            quantity_available = $2,
+            updated_at = NOW()
+          WHERE id = $3
+          `,
+          [newOnHand, newAvailable, stock.id]
+        );
+
+        // Record stock movement
+        await query(
+          `
+          INSERT INTO stock_movements (
+            product_id,
+            warehouse_id,
+            movement_type,
+            quantity,
+            reference_type,
+            reference_id,
+            notes,
+            created_by,
+            created_at
+          )
+          VALUES ($1, $2, $3, $4, 'ASSIGNMENT_UPDATE', $5, $6, $7, NOW())
+          `,
+          [
+            currentAssignment.product_id,
+            stock.warehouse_id,
+            quantityDiff > 0 ? 'OUT' : 'IN',
+            Math.abs(quantityDiff),
+            assignment.id,
+            `Assignment quantity updated from ${oldQuantity} to ${newQuantity}`,
+            req.user?.user_id || null
+          ]
+        );
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Assignment updated successfully',
       data: assignment
     });
   } catch (err) {

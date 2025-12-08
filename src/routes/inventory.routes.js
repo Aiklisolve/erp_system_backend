@@ -139,6 +139,12 @@ router.post(
   inventoryController.createAssignment
 );
 
+router.put(
+  '/assignments/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.updateAssignment
+);
+
 // Purchase Orders (helper for assignment form)
 router.get(
   '/purchase-orders',
