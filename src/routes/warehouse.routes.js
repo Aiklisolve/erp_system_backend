@@ -45,4 +45,41 @@ router.delete(
   warehouseController.deleteWarehouse
 );
 
+// 📦 Stock Movements
+
+// List stock movements
+router.get(
+  '/stock-movements',
+  authorize('ADMIN', 'INVENTORY_MANAGER', 'WAREHOUSE_MANAGER'),
+  warehouseController.listStockMovements
+);
+
+// Get stock movement by ID
+router.get(
+  '/stock-movements/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER', 'WAREHOUSE_MANAGER'),
+  warehouseController.getStockMovementById
+);
+
+// Create stock movement
+router.post(
+  '/stock-movements',
+  authorize('ADMIN', 'INVENTORY_MANAGER', 'WAREHOUSE_MANAGER'),
+  warehouseController.createStockMovement
+);
+
+// Update stock movement
+router.put(
+  '/stock-movements/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER', 'WAREHOUSE_MANAGER'),
+  warehouseController.updateStockMovement
+);
+
+// Delete stock movement
+router.delete(
+  '/stock-movements/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  warehouseController.deleteStockMovement
+);
+
 export default router;
