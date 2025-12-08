@@ -23,20 +23,20 @@ export async function listProducts(req, res, next) {
     let idx = 1;
 
     if (category) {
-      conditions.push(`category = $${idx}`);
+      conditions.push(`p.category = $${idx}`);
       params.push(category);
       idx++;
     }
 
     if (typeof is_active !== 'undefined') {
-      conditions.push(`is_active = $${idx}`);
+      conditions.push(`p.is_active = $${idx}`);
       params.push(is_active === 'true');
       idx++;
     }
 
     if (search) {
       conditions.push(
-        `(product_code ILIKE $${idx} OR name ILIKE $${idx} OR description ILIKE $${idx})`
+        `(p.product_code ILIKE $${idx} OR p.name ILIKE $${idx} OR p.description ILIKE $${idx})`
       );
       params.push(`%${search}%`);
       idx++;
@@ -46,10 +46,15 @@ export async function listProducts(req, res, next) {
 
     const dataRes = await query(
       `
-      SELECT *
-      FROM products
+      SELECT 
+        p.*,
+        COALESCE(s.quantity_on_hand, 0) as qty_on_hand,
+        COALESCE(s.quantity_available, 0) as qty_available,
+        COALESCE(s.quantity_reserved, 0) as qty_reserved
+      FROM products p
+      LEFT JOIN inventory_stock s ON p.id = s.product_id
       ${where}
-      ORDER BY created_at DESC
+      ORDER BY p.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
       [...params, limit, offset]
@@ -58,7 +63,7 @@ export async function listProducts(req, res, next) {
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM products
+      FROM products p
       ${where}
       `,
       params
@@ -113,6 +118,18 @@ export async function createProduct(req, res, next) {
   try {
     const body = req.body;
 
+    // Auto-generate SKU/product_code if not provided
+    let productCode = body.product_code;
+    if (!productCode) {
+      // Get the next sequence number
+      const seqRes = await query(
+        `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
+      );
+      const nextId = seqRes.rows[0].next_id;
+      // Generate SKU in format: SKU-XXXX (e.g., SKU-0001)
+      productCode = `SKU-${String(nextId).padStart(4, '0')}`;
+    }
+
     const insertRes = await query(
       `
       INSERT INTO products (
@@ -128,7 +145,7 @@ export async function createProduct(req, res, next) {
       RETURNING *
       `,
       [
-        body.product_code,
+        productCode,
         body.name,
         body.description,
         body.category,
@@ -137,10 +154,35 @@ export async function createProduct(req, res, next) {
       ]
     );
 
+    const product = insertRes.rows[0];
+
+    // If quantity is provided, create inventory stock record
+    if (body.qty_on_hand !== undefined && body.qty_on_hand !== null) {
+      await query(
+        `
+        INSERT INTO inventory_stock (
+          product_id,
+          warehouse_id,
+          quantity_on_hand,
+          quantity_reserved,
+          quantity_available,
+          created_at
+        )
+        VALUES ($1, $2, $3, 0, $3, NOW())
+        ON CONFLICT (product_id, warehouse_id) 
+        DO UPDATE SET 
+          quantity_on_hand = inventory_stock.quantity_on_hand + $3,
+          quantity_available = inventory_stock.quantity_available + $3,
+          updated_at = NOW()
+        `,
+        [product.id, body.warehouse_id || 1, body.qty_on_hand]
+      );
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: insertRes.rows[0]
+      data: product
     });
   } catch (err) {
     next(err);
@@ -185,10 +227,47 @@ export async function updateProduct(req, res, next) {
       });
     }
 
+    const product = updateRes.rows[0];
+
+    // Update inventory stock if qty_on_hand is provided
+    if (body.qty_on_hand !== undefined && body.qty_on_hand !== null) {
+      const warehouseId = body.warehouse_id || 1;
+      
+      // Check if stock record exists
+      const stockRes = await query(
+        `SELECT * FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2`,
+        [id, warehouseId]
+      );
+
+      if (stockRes.rowCount > 0) {
+        // Update existing stock
+        await query(
+          `
+          UPDATE inventory_stock
+          SET
+            quantity_on_hand = $1,
+            quantity_available = $1 - quantity_reserved,
+            updated_at = NOW()
+          WHERE product_id = $2 AND warehouse_id = $3
+          `,
+          [body.qty_on_hand, id, warehouseId]
+        );
+      } else {
+        // Create new stock record
+        await query(
+          `
+          INSERT INTO inventory_stock (product_id, warehouse_id, quantity_on_hand, quantity_reserved, quantity_available, created_at)
+          VALUES ($1, $2, $3, 0, $3, NOW())
+          `,
+          [id, warehouseId, body.qty_on_hand]
+        );
+      }
+    }
+
     return res.json({
       success: true,
       message: 'Product updated successfully',
-      data: updateRes.rows[0]
+      data: product
     });
   } catch (err) {
     next(err);
