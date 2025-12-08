@@ -64,4 +64,86 @@ router.get(
   inventoryController.listStockMovements
 );
 
+// Vendors
+router.get(
+  '/vendors',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.listVendors
+);
+
+router.post(
+  '/vendors',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.createVendor
+);
+
+router.get(
+  '/vendors/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.getVendorById
+);
+
+router.put(
+  '/vendors/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.updateVendor
+);
+
+router.delete(
+  '/vendors/:id',
+  authorize('ADMIN'),
+  inventoryController.deleteVendor
+);
+
+// Categories
+router.get(
+  '/categories',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.listCategories
+);
+
+router.post(
+  '/categories',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.createCategory
+);
+
+router.get(
+  '/categories/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.getCategoryById
+);
+
+router.put(
+  '/categories/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.updateCategory
+);
+
+router.delete(
+  '/categories/:id',
+  authorize('ADMIN'),
+  inventoryController.deleteCategory
+);
+
+// Inventory Assignments
+router.get(
+  '/assignments',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.listAssignments
+);
+
+router.post(
+  '/assignments',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.createAssignment
+);
+
+// Purchase Orders (helper for assignment form)
+router.get(
+  '/purchase-orders',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.listPurchaseOrdersForAssignment
+);
+
 export default router;
