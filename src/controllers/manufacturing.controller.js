@@ -105,36 +105,100 @@ export async function getProductionOrderById(req, res, next) {
 // POST /api/v1/manufacturing/production-orders
 export async function createProductionOrder(req, res, next) {
   try {
-    const body = req.body;
+    const {
+      po_number,
+      production_order_number,
+      product_id,
+      quantity_to_produce,
+      planned_qty,
+      quantity_produced,
+      produced_qty,
+      start_date,
+      end_date,
+      expected_completion_date,
+      actual_completion_date,
+      status,
+      priority,
+      production_line,
+      shift,
+      supervisor_id,
+      quality_status,
+      notes
+    } = req.body;
+
+    // Map alternative field names
+    const poNum = production_order_number || po_number;
+    const qtyToProduce = planned_qty || quantity_to_produce;
+    const qtyProduced = produced_qty || quantity_produced || 0;
+    const expectedDate = end_date || expected_completion_date;
+
+    // Validate required fields
+    if (!product_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'product_id is required'
+      });
+    }
+    if (!qtyToProduce) {
+      return res.status(400).json({
+        success: false,
+        message: 'quantity_to_produce (or planned_qty) is required'
+      });
+    }
+    if (!start_date) {
+      return res.status(400).json({
+        success: false,
+        message: 'start_date is required'
+      });
+    }
+    if (!expectedDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'expected_completion_date (or end_date) is required'
+      });
+    }
 
     const insertRes = await query(
       `
       INSERT INTO production_orders (
         po_number,
         product_id,
-        quantity,
-        status,
-        production_line,
+        quantity_to_produce,
+        quantity_produced,
         start_date,
-        expected_end_date,
+        expected_completion_date,
+        actual_completion_date,
+        status,
+        priority,
+        production_line,
+        shift,
+        supervisor_id,
+        quality_status,
         notes,
         created_by,
-        created_at
+        created_at,
+        updated_at
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW()
       )
       RETURNING *
       `,
       [
-        body.po_number,
-        body.product_id,
-        body.quantity,
-        body.status,
-        body.production_line,
-        body.start_date,
-        body.expected_end_date,
-        body.notes,
+        poNum,
+        product_id,
+        qtyToProduce,
+        qtyProduced,
+        start_date,
+        expectedDate,
+        actual_completion_date || null,
+        status || 'PENDING',
+        priority || 'MEDIUM',
+        production_line || null,
+        shift || null,
+        supervisor_id || null,
+        quality_status || 'PENDING',
+        notes || null,
         req.user?.user_id || null
       ]
     );
@@ -153,33 +217,70 @@ export async function createProductionOrder(req, res, next) {
 export async function updateProductionOrder(req, res, next) {
   try {
     const { id } = req.params;
-    const body = req.body;
+    const {
+      po_number,
+      production_order_number,
+      product_id,
+      quantity_to_produce,
+      planned_qty,
+      quantity_produced,
+      produced_qty,
+      start_date,
+      end_date,
+      expected_completion_date,
+      actual_completion_date,
+      status,
+      priority,
+      production_line,
+      shift,
+      supervisor_id,
+      quality_status,
+      notes
+    } = req.body;
+
+    // Map alternative field names
+    const poNum = production_order_number || po_number;
+    const qtyToProduce = planned_qty || quantity_to_produce;
+    const qtyProduced = produced_qty || quantity_produced;
+    const expectedDate = end_date || expected_completion_date;
 
     const updateRes = await query(
       `
       UPDATE production_orders
       SET
-        product_id        = COALESCE($1, product_id),
-        quantity          = COALESCE($2, quantity),
-        status            = COALESCE($3, status),
-        production_line   = COALESCE($4, production_line),
-        start_date        = COALESCE($5, start_date),
-        expected_end_date = COALESCE($6, expected_end_date),
-        actual_end_date   = COALESCE($7, actual_end_date),
-        notes             = COALESCE($8, notes),
-        updated_at        = NOW()
-      WHERE id = $9
+        po_number                   = COALESCE($1, po_number),
+        product_id                  = COALESCE($2, product_id),
+        quantity_to_produce         = COALESCE($3, quantity_to_produce),
+        quantity_produced           = COALESCE($4, quantity_produced),
+        start_date                  = COALESCE($5, start_date),
+        expected_completion_date    = COALESCE($6, expected_completion_date),
+        actual_completion_date      = COALESCE($7, actual_completion_date),
+        status                      = COALESCE($8, status),
+        priority                    = COALESCE($9, priority),
+        production_line             = COALESCE($10, production_line),
+        shift                       = COALESCE($11, shift),
+        supervisor_id               = COALESCE($12, supervisor_id),
+        quality_status              = COALESCE($13, quality_status),
+        notes                       = COALESCE($14, notes),
+        updated_at                  = NOW()
+      WHERE id = $15
       RETURNING *
       `,
       [
-        body.product_id,
-        body.quantity,
-        body.status,
-        body.production_line,
-        body.start_date,
-        body.expected_end_date,
-        body.actual_end_date,
-        body.notes,
+        poNum,
+        product_id,
+        qtyToProduce,
+        qtyProduced,
+        start_date,
+        expectedDate,
+        actual_completion_date,
+        status,
+        priority,
+        production_line,
+        shift,
+        supervisor_id,
+        quality_status,
+        notes,
         id
       ]
     );

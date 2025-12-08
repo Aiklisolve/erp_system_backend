@@ -8,6 +8,34 @@ const router = Router();
 // All order routes require authentication
 router.use(authMiddleware);
 
+// 🛒 General Orders (alias to sales orders)
+router.get(
+  '/',
+  authorize('ADMIN', 'SALES_MANAGER'),
+  ordersController.listOrders
+);
+
+// Create order (alias to create sales order)
+router.post(
+  '/',
+  authorize('ADMIN', 'SALES_MANAGER'),
+  ordersController.createSalesOrder
+);
+
+// Get order by ID (alias)
+router.get(
+  '/:id',
+  authorize('ADMIN', 'SALES_MANAGER'),
+  ordersController.getSalesOrderById
+);
+
+// Update order (alias)
+router.put(
+  '/:id',
+  authorize('ADMIN', 'SALES_MANAGER'),
+  ordersController.updateSalesOrder
+);
+
 // 🛒 Sales Orders
 
 // List sales orders

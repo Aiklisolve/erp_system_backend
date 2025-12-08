@@ -27,6 +27,59 @@ function validateAndFixDate(dateString) {
   }
 }
 
+// ---------- 📊 DASHBOARD ----------
+
+// GET /api/v1/finance/dashboard/stats
+export async function getDashboardStats(req, res, next) {
+  try {
+    // Get overall stats
+    const statsRes = await query(
+      `
+      SELECT 
+        COALESCE(SUM(CASE WHEN transaction_type = 'INCOME' AND status = 'COMPLETED' THEN amount ELSE 0 END), 0) as total_income,
+        COALESCE(SUM(CASE WHEN transaction_type = 'EXPENSE' AND status = 'COMPLETED' THEN amount ELSE 0 END), 0) as total_expense,
+        COALESCE(SUM(CASE WHEN transaction_type = 'INCOME' AND status = 'COMPLETED' THEN amount ELSE 0 END), 0) - 
+        COALESCE(SUM(CASE WHEN transaction_type = 'EXPENSE' AND status = 'COMPLETED' THEN amount ELSE 0 END), 0) as net_balance,
+        COUNT(CASE WHEN status IN ('PENDING', 'DRAFT') THEN 1 END) as pending_count,
+        COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as reconciled_count,
+        COALESCE(SUM(CASE WHEN status IN ('PENDING', 'DRAFT') THEN amount ELSE 0 END), 0) as pending_amount
+      FROM transactions
+      `
+    );
+
+    // Get current month stats
+    const monthStatsRes = await query(
+      `
+      SELECT 
+        COALESCE(SUM(CASE WHEN transaction_type = 'INCOME' AND status = 'COMPLETED' THEN amount ELSE 0 END), 0) as month_income,
+        COALESCE(SUM(CASE WHEN transaction_type = 'EXPENSE' AND status = 'COMPLETED' THEN amount ELSE 0 END), 0) as month_expense
+      FROM transactions
+      WHERE EXTRACT(MONTH FROM transaction_date) = EXTRACT(MONTH FROM CURRENT_DATE)
+        AND EXTRACT(YEAR FROM transaction_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+      `
+    );
+
+    const stats = statsRes.rows[0];
+    const monthStats = monthStatsRes.rows[0];
+
+    return res.json({
+      success: true,
+      data: {
+        total_income: parseFloat(stats.total_income),
+        total_expense: parseFloat(stats.total_expense),
+        net_balance: parseFloat(stats.net_balance),
+        pending_count: parseInt(stats.pending_count),
+        reconciled_count: parseInt(stats.reconciled_count),
+        pending_amount: parseFloat(stats.pending_amount),
+        month_income: parseFloat(monthStats.month_income),
+        month_expense: parseFloat(monthStats.month_expense)
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // ---------- 🧾 TRANSACTIONS ----------
 
 // GET /api/v1/finance/transactions

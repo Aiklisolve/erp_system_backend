@@ -1,8 +1,117 @@
 import { query } from '../config/database.js';
+import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 
 const USER_TABLE = 'users';
 
-// 2.1 Get Current User Profile
+// 2.0 List Users
+export async function listUsers(req, res, next) {
+  try {
+    const { page, limit, offset } = getPagination(req);
+    const { search, role, department, is_active } = req.query;
+
+    const conditions = [];
+    const params = [];
+    let idx = 1;
+
+    if (role) {
+      conditions.push(`role = $${idx}`);
+      params.push(role);
+      idx++;
+    }
+
+    if (department) {
+      conditions.push(`department = $${idx}`);
+      params.push(department);
+      idx++;
+    }
+
+    if (is_active !== undefined) {
+      conditions.push(`is_active = $${idx}`);
+      params.push(is_active === 'true');
+      idx++;
+    }
+
+    if (search) {
+      conditions.push(
+        `(email ILIKE $${idx} OR full_name ILIKE $${idx} OR phone ILIKE $${idx})`
+      );
+      params.push(`%${search}%`);
+      idx++;
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // data query
+    const dataRes = await query(
+      `
+      SELECT 
+        id, email, full_name, phone, role, department, 
+        profile_image_url, is_active, created_at, last_login
+      FROM ${USER_TABLE}
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+      `,
+      [...params, limit, offset]
+    );
+
+    // count query
+    const countRes = await query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM ${USER_TABLE}
+      ${where}
+      `,
+      params
+    );
+
+    const totalItems = countRes.rows[0]?.count || 0;
+
+    return res.json({
+      success: true,
+      data: {
+        users: dataRes.rows,
+        pagination: buildPaginationMeta(page, limit, totalItems)
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// 2.1 Get User by ID
+export async function getUserById(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      `
+      SELECT 
+        id, email, full_name, phone, role, department, 
+        profile_image_url, is_active, created_at, last_login
+      FROM ${USER_TABLE}
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: result.rows[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// 2.2 Get Current User Profile
 export async function getMe(req, res, next) {
   try {
     const userId = req.user.user_id;
