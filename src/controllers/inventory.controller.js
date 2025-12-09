@@ -23,20 +23,20 @@ export async function listProducts(req, res, next) {
     let idx = 1;
 
     if (category) {
-      conditions.push(`category = $${idx}`);
+      conditions.push(`p.category = $${idx}`);
       params.push(category);
       idx++;
     }
 
     if (typeof is_active !== 'undefined') {
-      conditions.push(`is_active = $${idx}`);
+      conditions.push(`p.is_active = $${idx}`);
       params.push(is_active === 'true');
       idx++;
     }
 
     if (search) {
       conditions.push(
-        `(product_code ILIKE $${idx} OR name ILIKE $${idx} OR description ILIKE $${idx})`
+        `(p.product_code ILIKE $${idx} OR p.name ILIKE $${idx} OR p.description ILIKE $${idx})`
       );
       params.push(`%${search}%`);
       idx++;
@@ -46,10 +46,15 @@ export async function listProducts(req, res, next) {
 
     const dataRes = await query(
       `
-      SELECT *
-      FROM products
+      SELECT 
+        p.*,
+        COALESCE(s.quantity_on_hand, 0) as qty_on_hand,
+        COALESCE(s.quantity_available, 0) as qty_available,
+        COALESCE(s.quantity_reserved, 0) as qty_reserved
+      FROM products p
+      LEFT JOIN inventory_stock s ON p.id = s.product_id
       ${where}
-      ORDER BY created_at DESC
+      ORDER BY p.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
       [...params, limit, offset]
@@ -58,7 +63,7 @@ export async function listProducts(req, res, next) {
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM products
+      FROM products p
       ${where}
       `,
       params
@@ -113,6 +118,18 @@ export async function createProduct(req, res, next) {
   try {
     const body = req.body;
 
+    // Auto-generate SKU/product_code if not provided
+    let productCode = body.product_code;
+    if (!productCode) {
+      // Get the next sequence number
+      const seqRes = await query(
+        `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
+      );
+      const nextId = seqRes.rows[0].next_id;
+      // Generate SKU in format: SKU-1, SKU-2, etc. (no zero padding)
+      productCode = `SKU-${nextId}`;
+    }
+
     const insertRes = await query(
       `
       INSERT INTO products (
@@ -128,7 +145,7 @@ export async function createProduct(req, res, next) {
       RETURNING *
       `,
       [
-        body.product_code,
+        productCode,
         body.name,
         body.description,
         body.category,
@@ -137,10 +154,35 @@ export async function createProduct(req, res, next) {
       ]
     );
 
+    const product = insertRes.rows[0];
+
+    // If quantity is provided, create inventory stock record
+    if (body.qty_on_hand !== undefined && body.qty_on_hand !== null) {
+      await query(
+        `
+        INSERT INTO inventory_stock (
+          product_id,
+          warehouse_id,
+          quantity_on_hand,
+          quantity_reserved,
+          quantity_available,
+          created_at
+        )
+        VALUES ($1, $2, $3, 0, $3, NOW())
+        ON CONFLICT (product_id, warehouse_id) 
+        DO UPDATE SET 
+          quantity_on_hand = inventory_stock.quantity_on_hand + $3,
+          quantity_available = inventory_stock.quantity_available + $3,
+          updated_at = NOW()
+        `,
+        [product.id, body.warehouse_id || 1, body.qty_on_hand]
+      );
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: insertRes.rows[0]
+      data: product
     });
   } catch (err) {
     next(err);
@@ -185,10 +227,47 @@ export async function updateProduct(req, res, next) {
       });
     }
 
+    const product = updateRes.rows[0];
+
+    // Update inventory stock if qty_on_hand is provided
+    if (body.qty_on_hand !== undefined && body.qty_on_hand !== null) {
+      const warehouseId = body.warehouse_id || 1;
+      
+      // Check if stock record exists
+      const stockRes = await query(
+        `SELECT * FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2`,
+        [id, warehouseId]
+      );
+
+      if (stockRes.rowCount > 0) {
+        // Update existing stock
+        await query(
+          `
+          UPDATE inventory_stock
+          SET
+            quantity_on_hand = $1,
+            quantity_available = $1 - quantity_reserved,
+            updated_at = NOW()
+          WHERE product_id = $2 AND warehouse_id = $3
+          `,
+          [body.qty_on_hand, id, warehouseId]
+        );
+      } else {
+        // Create new stock record
+        await query(
+          `
+          INSERT INTO inventory_stock (product_id, warehouse_id, quantity_on_hand, quantity_reserved, quantity_available, created_at)
+          VALUES ($1, $2, $3, 0, $3, NOW())
+          `,
+          [id, warehouseId, body.qty_on_hand]
+        );
+      }
+    }
+
     return res.json({
       success: true,
       message: 'Product updated successfully',
-      data: updateRes.rows[0]
+      data: product
     });
   } catch (err) {
     next(err);
@@ -288,20 +367,40 @@ export async function listStock(req, res, next) {
 export async function getStockForProduct(req, res, next) {
   try {
     const { product_id } = req.params;
+    const { warehouse_id } = req.query;
 
-    const result = await query(
-      `
+    let queryStr = `
       SELECT *
       FROM inventory_stock
       WHERE product_id = $1
-      ORDER BY warehouse_id
-      `,
-      [product_id]
-    );
+    `;
+    const params = [product_id];
+    let idx = 2;
+
+    if (warehouse_id) {
+      queryStr += ` AND warehouse_id = $${idx}`;
+      params.push(warehouse_id);
+      idx++;
+    }
+
+    queryStr += ` ORDER BY warehouse_id LIMIT 1`;
+
+    const result = await query(queryStr, params);
+
+    if (result.rowCount === 0) {
+      return res.json({
+        success: true,
+        data: {
+          quantity_available: 0,
+          quantity_on_hand: 0,
+          quantity_reserved: 0
+        }
+      });
+    }
 
     return res.json({
       success: true,
-      data: result.rows
+      data: result.rows[0]
     });
   } catch (err) {
     next(err);
@@ -427,9 +526,120 @@ export async function adjustStock(req, res, next) {
   }
 }
 
+// POST /api/v1/inventory/stock/movements
+export async function createStockMovement(req, res, next) {
+  try {
+    const body = req.body;
+
+    // Map frontend fields to database schema
+    // Actual table has: warehouse_id (single warehouse), no movement_date, no status, no from/to
+    // Frontend sends: from_location (e.g., "WH-1"), to_location, product_id, etc.
+    
+    const warehouseId = body.warehouse_id || body.from || body.from_warehouse_id || (body.from_location ? parseInt(body.from_location.replace('WH-', '')) : null);
+
+    if (!body.product_id || !warehouseId || !body.quantity || !body.movement_type) {
+      return res.status(400).json({
+        success: false,
+        message: 'product_id, warehouse_id, quantity and movement_type are required'
+      });
+    }
+
+    // Validate product exists
+    const productCheck = await query(
+      `SELECT id FROM products WHERE id = $1`,
+      [body.product_id]
+    );
+
+    if (productCheck.rowCount === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Product with id ${body.product_id} does not exist`
+      });
+    }
+
+    const insertRes = await query(
+      `
+      INSERT INTO stock_movements (
+        product_id,
+        warehouse_id,
+        movement_type,
+        quantity,
+        reference_type,
+        reference_id,
+        notes,
+        created_by,
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      RETURNING *
+      `,
+      [
+        body.product_id,
+        warehouseId,
+        body.movement_type,
+        body.quantity,
+        body.reference_type || null,
+        body.reference_id || null,
+        body.notes || null,
+        req.user?.user_id || null
+      ]
+    );
+
+    // Fetch with product and warehouse details
+    const result = await query(
+      `
+      SELECT 
+        sm.*,
+        p.product_code as item_id,
+        p.name as item_name,
+        p.product_code as item_sku,
+        p.unit_of_measure as unit,
+        w.warehouse_code as from_location,
+        w.warehouse_code as from_warehouse_code,
+        w.warehouse_code as to_location,
+        w.warehouse_code as to_warehouse_code,
+        sm.created_at as movement_date,
+        'Pending' as status
+      FROM stock_movements sm
+      LEFT JOIN products p ON sm.product_id = p.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      WHERE sm.id = $1
+      `,
+      [insertRes.rows[0].id]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Stock movement created successfully',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error('Error creating stock movement:', err);
+    next(err);
+  }
+}
+
 // GET /api/v1/inventory/stock/movements
 export async function listStockMovements(req, res, next) {
   try {
+    // Check what columns actually exist in the tables
+    const allColumns = await query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'stock_movements'
+      ORDER BY ordinal_position
+    `);
+    console.log('All columns in stock_movements:', allColumns.rows.map(r => r.column_name));
+    
+    // Check warehouses table columns
+    const warehouseColumns = await query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'warehouses'
+      ORDER BY ordinal_position
+    `);
+    console.log('All columns in warehouses:', warehouseColumns.rows.map(r => r.column_name));
+    
     const { page, limit, offset } = getPagination(req);
     const { product_id, warehouse_id, movement_type } = req.query;
 
@@ -438,53 +648,336 @@ export async function listStockMovements(req, res, next) {
     let idx = 1;
 
     if (product_id) {
-      conditions.push(`product_id = $${idx}`);
+      conditions.push(`sm.product_id = $${idx}`);
       params.push(product_id);
       idx++;
     }
 
     if (warehouse_id) {
-      conditions.push(`warehouse_id = $${idx}`);
+      // Check warehouse based on what columns exist
+      const hasFromTo = allColumns.rows.some(r => r.column_name === 'from' || r.column_name === 'to');
+      const hasWarehouseId = allColumns.rows.some(r => r.column_name === 'warehouse_id');
+      
+      if (hasFromTo) {
+        conditions.push(`(sm."from" = $${idx} OR sm."to" = $${idx})`);
+      } else if (hasWarehouseId) {
+        conditions.push(`sm.warehouse_id = $${idx}`);
+      }
       params.push(warehouse_id);
       idx++;
     }
 
     if (movement_type) {
-      conditions.push(`movement_type = $${idx}`);
+      conditions.push(`sm.movement_type = $${idx}`);
       params.push(movement_type);
       idx++;
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const dataRes = await query(
-      `
-      SELECT *
-      FROM stock_movements
-      ${where}
-      ORDER BY created_at DESC
-      LIMIT $${idx} OFFSET $${idx + 1}
-      `,
-      [...params, limit, offset]
-    );
+    // Build query based on actual table structure
+    // Check if "from" and "to" columns exist, otherwise use warehouse_id
+    const hasFromToColumns = allColumns.rows.some(r => r.column_name === 'from' || r.column_name === 'to');
+    const hasWarehouseId = allColumns.rows.some(r => r.column_name === 'warehouse_id');
+    
+    let queryStr;
+    if (hasFromToColumns) {
+      // Use "from" and "to" columns if they exist
+      queryStr = `
+        SELECT 
+          sm.id,
+          sm.product_id,
+          sm.movement_type,
+          sm.quantity,
+          sm.reference_type,
+          sm.reference_id,
+          sm.movement_date,
+          sm.notes,
+          sm.status,
+          sm.created_by,
+          sm.created_at,
+          sm."from" as from_warehouse_id,
+          sm."to" as to_warehouse_id,
+          p.product_code as item_id,
+          p.name as item_name,
+          p.product_code as item_sku,
+          p.unit_of_measure as unit,
+          wf.name as from_location,
+          wf.warehouse_code as from_warehouse_code,
+          wt.name as to_location,
+          wt.warehouse_code as to_warehouse_code
+        FROM stock_movements sm
+        LEFT JOIN products p ON sm.product_id = p.id
+        LEFT JOIN warehouses wf ON sm."from" = wf.id
+        LEFT JOIN warehouses wt ON sm."to" = wt.id
+        ${where}
+        ORDER BY COALESCE(sm.movement_date, sm.created_at) DESC NULLS LAST
+        LIMIT $${idx} OFFSET $${idx + 1}
+      `;
+    } else if (hasWarehouseId) {
+      // Use warehouse_id column if "from"/"to" don't exist
+      // Note: movement_date and status don't exist, use created_at instead
+      // Use warehouse_code (warehouse_name doesn't exist in this schema)
+      queryStr = `
+        SELECT 
+          sm.id,
+          sm.product_id,
+          sm.movement_type,
+          sm.quantity,
+          sm.reference_type,
+          sm.reference_id,
+          sm.notes,
+          sm.created_by,
+          sm.created_at,
+          sm.created_at as movement_date,
+          'Pending' as status,
+          sm.warehouse_id,
+          p.product_code as item_id,
+          p.name as item_name,
+          p.product_code as item_sku,
+          p.unit_of_measure as unit,
+          w.name as from_location,
+          w.warehouse_code as from_warehouse_code,
+          w.name as to_location,
+          w.warehouse_code as to_warehouse_code
+        FROM stock_movements sm
+        LEFT JOIN products p ON sm.product_id = p.id
+        LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+        ${where}
+        ORDER BY sm.created_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}
+      `;
+    } else {
+      // No warehouse columns - just return basic data
+      queryStr = `
+        SELECT 
+          sm.id,
+          sm.product_id,
+          sm.movement_type,
+          sm.quantity,
+          sm.reference_type,
+          sm.reference_id,
+          sm.notes,
+          sm.created_by,
+          sm.created_at,
+          sm.created_at as movement_date,
+          'Pending' as status,
+          p.product_code as item_id,
+          p.name as item_name,
+          p.product_code as item_sku,
+          p.unit_of_measure as unit,
+          'Unknown' as from_location,
+          'Unknown' as to_location
+        FROM stock_movements sm
+        LEFT JOIN products p ON sm.product_id = p.id
+        ${where}
+        ORDER BY sm.created_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}
+      `;
+    }
+
+    console.log('Stock movements query:', queryStr);
+    console.log('Query params:', [...params, limit, offset]);
+
+    const dataRes = await query(queryStr, [...params, limit, offset]);
+
+    console.log('Stock movements found:', dataRes.rowCount);
+    console.log('Sample movement:', dataRes.rows[0] || 'none');
 
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM stock_movements
+      FROM stock_movements sm
       ${where}
       `,
       params
     );
 
     const total = countRes.rows[0]?.count || 0;
+    console.log('Total movements count:', total);
 
     return res.json({
       success: true,
       data: {
-        movements: dataRes.rows,
+        movements: dataRes.rows || [],
         pagination: buildPaginationMeta(page, limit, total)
       }
+    });
+  } catch (err) {
+    console.error('Error in listStockMovements:', err);
+    next(err);
+  }
+}
+
+// GET /api/v1/inventory/stock/movements/:id
+export async function getStockMovementById(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      `
+      SELECT 
+        sm.*,
+        p.product_code as item_id,
+        p.name as item_name,
+        p.product_code as item_sku,
+        p.unit_of_measure as unit,
+        w.warehouse_code as from_location,
+        w.warehouse_code as from_warehouse_code,
+        w.warehouse_code as to_location,
+        w.warehouse_code as to_warehouse_code,
+        sm.created_at as movement_date,
+        'Pending' as status
+      FROM stock_movements sm
+      LEFT JOIN products p ON sm.product_id = p.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      WHERE sm.id = $1
+      `,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock movement not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: result.rows[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// PUT /api/v1/inventory/stock/movements/:id
+export async function updateStockMovement(req, res, next) {
+  try {
+    const { id } = req.params;
+    const body = req.body;
+
+    // Map frontend fields to database schema
+    // Actual table has: warehouse_id (single warehouse), no movement_date, no status
+    const warehouseId = body.warehouse_id !== undefined ? body.warehouse_id : 
+                       (body.from !== undefined ? body.from : 
+                       (body.from_location ? parseInt(body.from_location.replace('WH-', '')) : null));
+
+    const updateFields = [];
+    const updateValues = [];
+    let paramIdx = 1;
+
+    if (body.product_id !== undefined) {
+      updateFields.push(`product_id = $${paramIdx++}`);
+      updateValues.push(body.product_id);
+    }
+    if (warehouseId !== null && warehouseId !== undefined) {
+      updateFields.push(`warehouse_id = $${paramIdx++}`);
+      updateValues.push(warehouseId);
+    }
+    if (body.movement_type !== undefined) {
+      updateFields.push(`movement_type = $${paramIdx++}`);
+      updateValues.push(body.movement_type);
+    }
+    if (body.quantity !== undefined) {
+      updateFields.push(`quantity = $${paramIdx++}`);
+      updateValues.push(body.quantity);
+    }
+    if (body.reference_type !== undefined) {
+      updateFields.push(`reference_type = $${paramIdx++}`);
+      updateValues.push(body.reference_type);
+    }
+    if (body.reference_id !== undefined) {
+      updateFields.push(`reference_id = $${paramIdx++}`);
+      updateValues.push(body.reference_id);
+    }
+    if (body.notes !== undefined) {
+      updateFields.push(`notes = $${paramIdx++}`);
+      updateValues.push(body.notes);
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No fields to update'
+      });
+    }
+
+    updateValues.push(id);
+    const updateQuery = `
+      UPDATE stock_movements
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramIdx}
+      RETURNING *
+    `;
+
+    const updateRes = await query(updateQuery, updateValues);
+
+    if (updateRes.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock movement not found'
+      });
+    }
+
+    // Fetch with product and warehouse details
+    const result = await query(
+      `
+      SELECT 
+        sm.*,
+        p.product_code as item_id,
+        p.name as item_name,
+        p.product_code as item_sku,
+        p.unit_of_measure as unit,
+        w.warehouse_code as from_location,
+        w.warehouse_code as from_warehouse_code,
+        w.warehouse_code as to_location,
+        w.warehouse_code as to_warehouse_code,
+        sm.created_at as movement_date,
+        'Pending' as status
+      FROM stock_movements sm
+      LEFT JOIN products p ON sm.product_id = p.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      WHERE sm.id = $1
+      `,
+      [id]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Stock movement updated successfully',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error('Error updating stock movement:', err);
+    next(err);
+  }
+}
+
+// DELETE /api/v1/inventory/stock/movements/:id
+export async function deleteStockMovement(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const delRes = await query(
+      `
+      DELETE FROM stock_movements
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (delRes.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock movement not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Stock movement deleted successfully'
     });
   } catch (err) {
     next(err);
@@ -1071,6 +1564,119 @@ export async function createAssignment(req, res, next) {
     return res.status(201).json({
       success: true,
       message: 'Inventory assigned successfully',
+      data: assignment
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// PUT /api/v1/inventory/assignments/:id
+export async function updateAssignment(req, res, next) {
+  try {
+    const { id } = req.params;
+    const body = req.body;
+
+    // Get current assignment to calculate quantity difference
+    const currentRes = await query(
+      `SELECT * FROM inventory_assignments WHERE id = $1`,
+      [id]
+    );
+
+    if (currentRes.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Assignment not found'
+      });
+    }
+
+    const currentAssignment = currentRes.rows[0];
+    const oldQuantity = currentAssignment.quantity;
+    const newQuantity = body.quantity || oldQuantity;
+    const quantityDiff = newQuantity - oldQuantity;
+
+    // Update the assignment
+    const updateRes = await query(
+      `
+      UPDATE inventory_assignments
+      SET
+        quantity = COALESCE($1, quantity),
+        date_of_use = COALESCE($2, date_of_use),
+        reason_notes = COALESCE($3, reason_notes)
+      WHERE id = $4
+      RETURNING *
+      `,
+      [
+        body.quantity,
+        body.date_of_use,
+        body.reason_notes,
+        id
+      ]
+    );
+
+    const assignment = updateRes.rows[0];
+
+    // Update inventory stock if quantity changed
+    if (quantityDiff !== 0) {
+      const stockRes = await query(
+        `
+        SELECT * FROM inventory_stock 
+        WHERE product_id = $1
+        LIMIT 1
+        `,
+        [currentAssignment.product_id]
+      );
+
+      if (stockRes.rowCount > 0) {
+        const stock = stockRes.rows[0];
+        // If quantity increased, reduce stock; if decreased, add back stock
+        const newOnHand = Math.max(0, (stock.quantity_on_hand || 0) - quantityDiff);
+        const newAvailable = Math.max(0, (stock.quantity_available || 0) - quantityDiff);
+
+        await query(
+          `
+          UPDATE inventory_stock
+          SET
+            quantity_on_hand = $1,
+            quantity_available = $2,
+            updated_at = NOW()
+          WHERE id = $3
+          `,
+          [newOnHand, newAvailable, stock.id]
+        );
+
+        // Record stock movement
+        await query(
+          `
+          INSERT INTO stock_movements (
+            product_id,
+            warehouse_id,
+            movement_type,
+            quantity,
+            reference_type,
+            reference_id,
+            notes,
+            created_by,
+            created_at
+          )
+          VALUES ($1, $2, $3, $4, 'ASSIGNMENT_UPDATE', $5, $6, $7, NOW())
+          `,
+          [
+            currentAssignment.product_id,
+            stock.warehouse_id,
+            quantityDiff > 0 ? 'OUT' : 'IN',
+            Math.abs(quantityDiff),
+            assignment.id,
+            `Assignment quantity updated from ${oldQuantity} to ${newQuantity}`,
+            req.user?.user_id || null
+          ]
+        );
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Assignment updated successfully',
       data: assignment
     });
   } catch (err) {
