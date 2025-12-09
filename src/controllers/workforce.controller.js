@@ -253,6 +253,46 @@ export async function createShift(req, res, next) {
     const shiftId = uuidv4();
     const shiftNumber = body.shift_number || generateShiftNumber();
 
+    // Normalize department to uppercase (required by database constraint)
+    // Map common variations to allowed values
+    const departmentMapping = {
+      'PROJECTS': 'OTHER',
+      'PROJECT': 'OTHER',
+      'PROJECT_MANAGEMENT': 'OTHER',
+      'MANAGEMENT': 'ADMINISTRATION',
+      'ADMIN': 'ADMINISTRATION',
+      'CUSTOMER SUPPORT': 'CUSTOMER_SERVICE',
+      'SUPPORT': 'CUSTOMER_SERVICE',
+      'CUSTOMER SUPPORT': 'CUSTOMER_SERVICE'
+    };
+    
+    let normalizedDepartment = body.department ? String(body.department).toUpperCase().trim() : null;
+    
+    // Apply mapping if exists
+    if (normalizedDepartment && departmentMapping[normalizedDepartment]) {
+      normalizedDepartment = departmentMapping[normalizedDepartment];
+    }
+    
+    // Validate department value against allowed values
+    const allowedDepartments = [
+      'IT', 'FINANCE', 'OPERATIONS', 'SALES', 'HR', 'WAREHOUSE',
+      'PROCUREMENT', 'MANUFACTURING', 'CUSTOMER_SERVICE', 'ADMINISTRATION', 'OTHER'
+    ];
+    
+    if (normalizedDepartment && !allowedDepartments.includes(normalizedDepartment)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: {
+          department: `Department "${body.department}" is not valid. Must be one of: ${allowedDepartments.join(', ')}. Note: "Projects" maps to "OTHER".`
+        }
+      });
+    }
+
+    // Normalize status and shift_type to uppercase
+    const normalizedStatus = body.status ? String(body.status).toUpperCase() : null;
+    const normalizedShiftType = body.shift_type ? String(body.shift_type).toUpperCase() : null;
+
     // Calculate total hours
     const totalHours = body.total_hours || calculateTotalHours(
       body.start_time,
@@ -341,11 +381,11 @@ export async function createShift(req, res, next) {
         totalHours,
         body.role,
         body.erp_role || null,
-        body.department || null,
+        normalizedDepartment,
         body.job_title || null,
         body.location || null,
-        body.shift_type,
-        body.status,
+        normalizedShiftType,
+        normalizedStatus,
         body.is_overtime || false,
         body.scheduled_by || null,
         body.approved_by || null,
@@ -408,6 +448,52 @@ export async function updateShift(req, res, next) {
 
     const existing = existingRes.rows[0];
 
+    // Normalize department, status, and shift_type to uppercase if provided
+    const normalizedBody = { ...body };
+    if (body.department !== undefined) {
+      // Map common variations to allowed values
+      const departmentMapping = {
+        'PROJECTS': 'OTHER',
+        'PROJECT': 'OTHER',
+        'PROJECT_MANAGEMENT': 'OTHER',
+        'MANAGEMENT': 'ADMINISTRATION',
+        'ADMIN': 'ADMINISTRATION',
+        'CUSTOMER SUPPORT': 'CUSTOMER_SERVICE',
+        'SUPPORT': 'CUSTOMER_SERVICE'
+      };
+      
+      let normalizedDept = String(body.department).toUpperCase().trim();
+      
+      // Apply mapping if exists
+      if (departmentMapping[normalizedDept]) {
+        normalizedDept = departmentMapping[normalizedDept];
+      }
+      
+      // Validate department value
+      const allowedDepartments = [
+        'IT', 'FINANCE', 'OPERATIONS', 'SALES', 'HR', 'WAREHOUSE',
+        'PROCUREMENT', 'MANUFACTURING', 'CUSTOMER_SERVICE', 'ADMINISTRATION', 'OTHER'
+      ];
+      
+      if (!allowedDepartments.includes(normalizedDept)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: {
+            department: `Department "${body.department}" is not valid. Must be one of: ${allowedDepartments.join(', ')}. Note: "Projects" maps to "OTHER".`
+          }
+        });
+      }
+      
+      normalizedBody.department = normalizedDept;
+    }
+    if (body.status !== undefined) {
+      normalizedBody.status = String(body.status).toUpperCase();
+    }
+    if (body.shift_type !== undefined) {
+      normalizedBody.shift_type = String(body.shift_type).toUpperCase();
+    }
+
     // Build dynamic update query
     const updates = [];
     const params = [];
@@ -426,9 +512,9 @@ export async function updateShift(req, res, next) {
     ];
 
     fields.forEach(field => {
-      if (body[field] !== undefined) {
+      if (normalizedBody[field] !== undefined) {
         updates.push(`${field} = $${idx}`);
-        params.push(body[field]);
+        params.push(normalizedBody[field]);
         idx++;
       }
     });

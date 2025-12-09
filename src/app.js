@@ -23,9 +23,9 @@ import uploadRoutes from './routes/upload.routes.js';
 import productsRoutes from './routes/products.routes.js';
 import customersRoutes from './routes/customers.routes.js';
 import workforceRoutes from './routes/workforce.routes.js';
+import hrRoutes from './routes/hr.routes.js';
 
 // If/when you create these files, uncomment the imports + app.use below
-// import hrRoutes from './routes/hr.routes.js';
 // import tasksRoutes from './routes/tasks.routes.js';
 
 const app = express();
@@ -59,6 +59,7 @@ app.use(`${base}/upload`, uploadRoutes);
 app.use(`${base}`, productsRoutes);
 app.use(`${base}/customers`, customersRoutes);
 app.use(`${base}/workforce`, workforceRoutes);
+app.use(`${base}/hr`, hrRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {
