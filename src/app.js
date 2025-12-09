@@ -22,6 +22,7 @@ import projectsRoutes from './routes/projects.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import productsRoutes from './routes/products.routes.js';
 import customersRoutes from './routes/customers.routes.js';
+import workforceRoutes from './routes/workforce.routes.js';
 
 // If/when you create these files, uncomment the imports + app.use below
 // import hrRoutes from './routes/hr.routes.js';
@@ -57,6 +58,7 @@ app.use(`${base}/projects`, projectsRoutes);
 app.use(`${base}/upload`, uploadRoutes);
 app.use(`${base}`, productsRoutes);
 app.use(`${base}/customers`, customersRoutes);
+app.use(`${base}/workforce`, workforceRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {
@@ -66,5 +68,9 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Error handling middleware (must be last)
+import { errorHandler } from './middleware/errorHandler.js';
+app.use(errorHandler);
 
 export default app;
