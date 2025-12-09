@@ -46,22 +46,48 @@ router.get(
   inventoryController.listStock
 );
 
-router.get(
-  '/stock/:product_id',
-  authorize('ADMIN', 'INVENTORY_MANAGER'),
-  inventoryController.getStockForProduct
-);
-
 router.post(
   '/stock/adjust',
   authorize('ADMIN', 'INVENTORY_MANAGER'),
   inventoryController.adjustStock
 );
 
+// Stock Movements - Must come BEFORE /stock/:product_id to avoid route conflict
 router.get(
   '/stock/movements',
   authorize('ADMIN', 'INVENTORY_MANAGER'),
   inventoryController.listStockMovements
+);
+
+router.post(
+  '/stock/movements',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.createStockMovement
+);
+
+router.get(
+  '/stock/movements/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.getStockMovementById
+);
+
+router.put(
+  '/stock/movements/:id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.updateStockMovement
+);
+
+router.delete(
+  '/stock/movements/:id',
+  authorize('ADMIN'),
+  inventoryController.deleteStockMovement
+);
+
+// Stock by product - Must come AFTER /stock/movements routes
+router.get(
+  '/stock/:product_id',
+  authorize('ADMIN', 'INVENTORY_MANAGER'),
+  inventoryController.getStockForProduct
 );
 
 // Vendors
