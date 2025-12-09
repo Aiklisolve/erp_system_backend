@@ -14,7 +14,9 @@ router.delete('/erp-users/:id', authMiddleware, CrmController.deleteErpUser);
 // Customers
 router.get('/customers', authMiddleware, CrmController.listCustomers);
 router.post('/customers', authMiddleware, CrmController.createCustomer);
+router.get('/customers/:id', authMiddleware, CrmController.getCustomerById);
 router.put('/customers/:id', authMiddleware, CrmController.updateCustomer);
+router.patch('/customers/:id', authMiddleware, CrmController.updateCustomer);
 router.delete('/customers/:id', authMiddleware, CrmController.deleteCustomer);
 
 export default router;

@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import sessionRoutes from './routes/session.routes.js';
 import crmRoutes from './routes/crm.routes.js';
+import erpUsersRoutes from './routes/erp-users.routes.js';
 
 // New module routes (CJS is fine, Node will treat module.exports as default)
 import financeRoutes from './routes/finance.routes.js';
@@ -24,7 +25,7 @@ import productsRoutes from './routes/products.routes.js';
 import customersRoutes from './routes/customers.routes.js';
 
 // If/when you create these files, uncomment the imports + app.use below
-// import hrRoutes from './routes/hr.routes.js';
+import hrRoutes from './routes/hr.routes.js';
 // import tasksRoutes from './routes/tasks.routes.js';
 
 const app = express();
@@ -41,9 +42,11 @@ app.use(`${base}/auth`, authRoutes);
 app.use(`${base}/users`, userRoutes);
 app.use(`${base}/sessions`, sessionRoutes);
 app.use(`${base}/crm`, crmRoutes);
+app.use(`${base}`, erpUsersRoutes); // ERP users routes at /api/v1/erp-users
 
-// Later, when you have HR/Tasks route files ready:
-// app.use(`${base}/hr`, hrRoutes);
+// HR routes
+app.use(`${base}/hr`, hrRoutes);
+// Later, when you have Tasks route files ready:
 // app.use(`${base}/tasks`, tasksRoutes);
 
 // Finance, inventory, etc.
