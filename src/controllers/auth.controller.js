@@ -356,8 +356,20 @@ export async function login(req, res, next) {
     }
 
     const user = result.rows[0];
-
+    
+    // Debug logging
+    console.log('=== LOGIN DEBUG ===');
+    console.log('Email:', email);
+    console.log('Password provided:', password);
+    console.log('Password hash from DB:', user.password_hash);
+    console.log('Hash length:', user.password_hash?.length);
+    console.log('Hash format check:', user.password_hash?.match(/^\$2[ayb]\$\d{2}\$.{53}$/) ? 'Valid' : 'Invalid');
+    console.log('');
+    
     const match = await comparePassword(password, user.password_hash);
+    console.log('Password comparison result:', match);
+    console.log('==================\n');
+    
     if (!match) {
       return res.status(401).json({
         success: false,

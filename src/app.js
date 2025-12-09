@@ -23,10 +23,9 @@ import projectsRoutes from './routes/projects.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import productsRoutes from './routes/products.routes.js';
 import customersRoutes from './routes/customers.routes.js';
-
-// If/when you create these files, uncomment the imports + app.use below
+import workforceRoutes from './routes/workforce.routes.js';
 import hrRoutes from './routes/hr.routes.js';
-// import tasksRoutes from './routes/tasks.routes.js';
+import tasksRoutes from './routes/tasks.routes.js';
 
 const app = express();
 
@@ -46,8 +45,6 @@ app.use(`${base}`, erpUsersRoutes); // ERP users routes at /api/v1/erp-users
 
 // HR routes
 app.use(`${base}/hr`, hrRoutes);
-// Later, when you have Tasks route files ready:
-// app.use(`${base}/tasks`, tasksRoutes);
 
 // Finance, inventory, etc.
 app.use(`${base}/finance`, financeRoutes);
@@ -60,6 +57,8 @@ app.use(`${base}/projects`, projectsRoutes);
 app.use(`${base}/upload`, uploadRoutes);
 app.use(`${base}`, productsRoutes);
 app.use(`${base}/customers`, customersRoutes);
+app.use(`${base}/workforce`, workforceRoutes);
+app.use(`${base}/tasks`, tasksRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {
@@ -69,5 +68,9 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Error handling middleware (must be last)
+import { errorHandler } from './middleware/errorHandler.js';
+app.use(errorHandler);
 
 export default app;
