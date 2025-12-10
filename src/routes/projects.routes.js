@@ -32,11 +32,16 @@ router.get(
 );
 
 // Update project
-router.put(
+router.patch(
   '/:id',
   authorize('ADMIN', 'PROJECT_MANAGER'),
   projectsController.updateProject
 );
+router.put(
+  '/:id',
+  authorize('ADMIN', 'PROJECT_MANAGER'),
+  projectsController.updateProject
+); // Keep PUT for backward compatibility
 
 // Delete project
 router.delete(
