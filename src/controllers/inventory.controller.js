@@ -165,10 +165,9 @@ export async function createProduct(req, res, next) {
           warehouse_id,
           quantity_on_hand,
           quantity_reserved,
-          quantity_available,
-          created_at
+          quantity_available
         )
-        VALUES ($1, $2, $3, 0, $3, NOW())
+        VALUES ($1, $2, $3, 0, $3)
         ON CONFLICT (product_id, warehouse_id) 
         DO UPDATE SET 
           quantity_on_hand = inventory_stock.quantity_on_hand + $3,
@@ -256,8 +255,8 @@ export async function updateProduct(req, res, next) {
         // Create new stock record
         await query(
           `
-          INSERT INTO inventory_stock (product_id, warehouse_id, quantity_on_hand, quantity_reserved, quantity_available, created_at)
-          VALUES ($1, $2, $3, 0, $3, NOW())
+          INSERT INTO inventory_stock (product_id, warehouse_id, quantity_on_hand, quantity_reserved, quantity_available)
+          VALUES ($1, $2, $3, 0, $3)
           `,
           [id, warehouseId, body.qty_on_hand]
         );
@@ -501,10 +500,9 @@ export async function adjustStock(req, res, next) {
           warehouse_id,
           quantity_on_hand,
           quantity_reserved,
-          quantity_available,
-          created_at
+          quantity_available
         )
-        VALUES ($1,$2,$3,0,$4,NOW())
+        VALUES ($1,$2,$3,0,$4)
         RETURNING *
         `,
         [product_id, warehouse_id, signedQty, signedQty]
