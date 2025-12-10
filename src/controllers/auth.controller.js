@@ -15,13 +15,37 @@ const OTP_TABLE = 'otp_verifications';
 // 1.1 Register User
 export async function register(req, res, next) {
   try {
-    const { email, password, full_name, phone, role, department } = req.body;
+    const body = req.body;
+    
+    // Extract fields from request body
+    const {
+      email, password, 
+      // Basic info
+      first_name, last_name, username,
+      // Contact info
+      phone, mobile,
+      // Employment info
+      role, department, designation, employment_status, joining_date,
+      // Personal info
+      gender, date_of_birth,
+      // Address info
+      address, city, state, pincode,
+      // Additional info
+      manager_name, manager_id, manager_erp_user_id, work_phone, pan_number, aadhar_number, notes,
+      // Employee info
+      position, hire_date, salary, status,
+      emergency_contact_name, emergency_contact_phone,
+      bank_account_number, bank_name, bank_ifsc,
+      // Employee number (optional, will be auto-generated if not provided)
+      employee_number, employee_id
+    } = body;
 
-    const existing = await query(
+    // Check if email already exists in users or erp_users
+    const existingUser = await query(
       `SELECT id FROM ${USER_TABLE} WHERE email = $1`,
       [email]
     );
-    if (existing.rowCount > 0) {
+    if (existingUser.rowCount > 0) {
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -29,20 +53,220 @@ export async function register(req, res, next) {
       });
     }
 
-    const passwordHash = await hashPassword(password);
-    const userId = uuidv4();
+    const existingErpUser = await query(
+      `SELECT id FROM erp_users WHERE email = $1`,
+      [email]
+    );
+    if (existingErpUser.rowCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: [{ field: 'email', message: 'Email already exists' }]
+      });
+    }
 
-    const insertRes = await query(
+    // Check if username already exists
+    if (username) {
+      const existingUsername = await query(
+        `SELECT id FROM erp_users WHERE username = $1`,
+        [username]
+      );
+      if (existingUsername.rowCount > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: [{ field: 'username', message: 'Username already exists' }]
+        });
+      }
+    }
+
+    // Hash password
+    const passwordHash = await hashPassword(password);
+
+    // Generate employee_number/employee_id if not provided
+    const empNumber = employee_number || employee_id || `EMP-${Date.now()}`;
+    
+    // Use joining_date or hire_date, default to today
+    const joinDate = joining_date || hire_date || new Date().toISOString().split('T')[0];
+    
+    // Use employment_status or status, default to ACTIVE
+    const empStatus = employment_status || status || 'ACTIVE';
+    
+    // Build full_name from first_name and last_name if not provided
+    const fullName = body.full_name || [first_name, last_name].filter(Boolean).join(' ') || null;
+
+    // Resolve manager_id: if manager_erp_user_id is provided, find corresponding employees.id
+    let resolvedManagerId = manager_id || null;
+    if (manager_erp_user_id && !resolvedManagerId) {
+      // Find the employee_number from erp_users, then get employees.id
+      const managerErpUser = await query(
+        `SELECT employee_number FROM erp_users WHERE id = $1`,
+        [manager_erp_user_id]
+      );
+      if (managerErpUser.rowCount > 0) {
+        const managerEmployee = await query(
+          `SELECT id FROM employees WHERE employee_id = $1`,
+          [managerErpUser.rows[0].employee_number]
+        );
+        if (managerEmployee.rowCount > 0) {
+          resolvedManagerId = managerEmployee.rows[0].id;
+        }
+      }
+    }
+
+    // Start transaction - insert into all three tables
+    // Step 1: Insert into employees table
+    const employeeResult = await query(
       `
-      INSERT INTO ${USER_TABLE}
-      (id, email, password_hash, full_name, phone, role, department, is_active, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,true, NOW(), NOW())
-      RETURNING id, email, full_name, role, is_active, created_at
+      INSERT INTO employees (
+        employee_id, first_name, last_name, email, phone, department, position,
+        hire_date, salary, status, date_of_birth, gender,
+        address, city, state, pincode,
+        emergency_contact_name, emergency_contact_phone,
+        bank_account_number, bank_name, bank_ifsc,
+        pan_number, aadhar_number, manager_id, is_active, created_at, updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12,
+        $13, $14, $15, $16,
+        $17, $18,
+        $19, $20, $21,
+        $22, $23, $24, true, NOW(), NOW()
+      )
+      RETURNING id, employee_id
       `,
-      [userId, email, passwordHash, full_name, phone, role, department]
+      [
+        empNumber,
+        first_name,
+        last_name,
+        email,
+        phone || mobile,
+        department,
+        designation || position,
+        joinDate,
+        salary || null,
+        empStatus,
+        date_of_birth || null,
+        gender || null,
+        address || null,
+        city || null,
+        state || null,
+        pincode || null,
+        emergency_contact_name || null,
+        emergency_contact_phone || null,
+        bank_account_number || null,
+        bank_name || null,
+        bank_ifsc || null,
+        pan_number || null,
+        aadhar_number || null,
+        resolvedManagerId
+      ]
     );
 
-    const user = insertRes.rows[0];
+    const employee = employeeResult.rows[0];
+
+    // Get created_by from authenticated user (if available)
+    const createdBy = req.user?.user_id || null;
+
+    // Step 2: Insert into erp_users table
+    const erpUserResult = await query(
+      `
+      INSERT INTO erp_users (
+        employee_number, email, password_hash, mobile,
+        first_name, last_name, username, role, gender, date_of_birth,
+        employment_status, joining_date, designation, department,
+        manager_name, work_phone, pan_number, aadhar_number,
+        address, city, state, pincode, notes, created_by, is_active, created_at, updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4,
+        $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14,
+        $15, $16, $17, $18,
+        $19, $20, $21, $22, $23, $24, true, NOW(), NOW()
+      )
+      RETURNING *
+      `,
+      [
+        employee.employee_id, // Use employee_id from employees table
+        email,
+        passwordHash,
+        mobile || phone,
+        first_name,
+        last_name,
+        username,
+        role,
+        gender || null,
+        date_of_birth || null,
+        empStatus,
+        joinDate,
+        designation || position || null,
+        department,
+        manager_name || null,
+        work_phone || null,
+        pan_number || null,
+        aadhar_number || null,
+        address || null,
+        city || null,
+        state || null,
+        pincode || null,
+        notes || null,
+        createdBy
+      ]
+    );
+
+    if (!erpUserResult || erpUserResult.rowCount === 0) {
+      throw new Error('Failed to create ERP user record');
+    }
+
+    const erpUser = erpUserResult.rows[0];
+
+    if (!erpUser || !erpUser.id) {
+      console.error('ERP User created but ID missing:', erpUser);
+      throw new Error('Failed to create ERP user - ID not returned');
+    }
+
+    console.log('ERP User created successfully, ID:', erpUser.id);
+    console.log('About to insert into users table with erp_user_id:', erpUser.id);
+
+    // Step 3: Insert into users table
+    let user;
+    try {
+      const userResult = await query(
+        `
+        INSERT INTO ${USER_TABLE}
+        (email, password_hash, full_name, phone, role, department, erp_user_id, is_active, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
+        RETURNING id, email, full_name, role, is_active, created_at
+        `,
+        [
+          email,
+          passwordHash,
+          fullName,
+          phone || mobile,
+          role,
+          department,
+          erpUser.id // Link to erp_users
+        ]
+      );
+
+      console.log('Users table insert result:', userResult.rowCount, 'rows');
+
+      if (!userResult || userResult.rowCount === 0) {
+        throw new Error('Failed to create user record in users table');
+      }
+
+      user = userResult.rows[0];
+      console.log('User created successfully in users table, ID:', user.id);
+    } catch (userInsertError) {
+      console.error('Error inserting into users table:', userInsertError);
+      // Try to rollback or handle the error
+      throw new Error(`Failed to create user record: ${userInsertError.message}`);
+    }
+
+    // Step 4: Optionally update erp_users.created_by with user.id (if needed)
+    // Note: created_by can remain null for self-registered users
 
     const accessToken = signAccessToken({
       user_id: user.id,
@@ -71,6 +295,8 @@ export async function register(req, res, next) {
       message: 'User registered successfully',
       data: {
         user,
+        employee_id: employee.employee_id,
+        erp_user_id: erpUser.id,
         session_id: sessionId,
         token: accessToken,
         refresh_token: refreshToken,
@@ -78,6 +304,32 @@ export async function register(req, res, next) {
       }
     });
   } catch (err) {
+    // Provide more detailed error messages for debugging
+    if (err.code === '23505') { // Unique constraint violation
+      if (err.constraint === 'users_email_key') {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already exists in users table',
+          error: err.message
+        });
+      }
+      if (err.constraint === 'users_erp_user_id_key') {
+        return res.status(400).json({
+          success: false,
+          message: 'ERP user already linked to another user account',
+          error: err.message
+        });
+      }
+    }
+    if (err.code === '23503') { // Foreign key constraint violation
+      return res.status(400).json({
+        success: false,
+        message: 'Foreign key constraint violation - check erp_user_id reference',
+        error: err.message
+      });
+    }
+    
+    console.error('Registration error:', err);
     next(err);
   }
 }
@@ -104,8 +356,20 @@ export async function login(req, res, next) {
     }
 
     const user = result.rows[0];
-
+    
+    // Debug logging
+    console.log('=== LOGIN DEBUG ===');
+    console.log('Email:', email);
+    console.log('Password provided:', password);
+    console.log('Password hash from DB:', user.password_hash);
+    console.log('Hash length:', user.password_hash?.length);
+    console.log('Hash format check:', user.password_hash?.match(/^\$2[ayb]\$\d{2}\$.{53}$/) ? 'Valid' : 'Invalid');
+    console.log('');
+    
     const match = await comparePassword(password, user.password_hash);
+    console.log('Password comparison result:', match);
+    console.log('==================\n');
+    
     if (!match) {
       return res.status(401).json({
         success: false,

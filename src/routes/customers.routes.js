@@ -17,8 +17,9 @@ router.post('/', CrmController.createCustomer);
 // Get customer by ID
 router.get('/:id', CrmController.getCustomerById);
 
-// Update customer
+// Update customer (supports both PUT and PATCH)
 router.put('/:id', CrmController.updateCustomer);
+router.patch('/:id', CrmController.updateCustomer);
 
 // Delete customer
 router.delete('/:id', CrmController.deleteCustomer);

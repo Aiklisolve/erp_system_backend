@@ -11,7 +11,8 @@ router.use(authMiddleware);
 
 // Current user profile (must come before /:id)
 router.get('/me', UserController.getMe);
-router.put('/me', UserController.updateMe);
+router.patch('/me', UserController.updateMe);
+router.put('/me', UserController.updateMe); // Keep PUT for backward compatibility
 router.post('/me/avatar', upload.single('file'), UserController.uploadAvatar);
 
 // List users
@@ -19,5 +20,6 @@ router.get('/', UserController.listUsers);
 
 // Get user by ID
 router.get('/:id', UserController.getUserById);
+router.patch('/:id', UserController.updateUserById);
 
 export default router;
