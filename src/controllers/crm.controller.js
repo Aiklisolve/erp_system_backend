@@ -196,6 +196,9 @@ export async function createErpUser(req, res, next) {
     let passwordHash = '';
     if (body.password) {
       passwordHash = await hashPassword(body.password);
+    } else {
+      // Generate default password if not provided
+      passwordHash = await hashPassword('TempPassword123!');
     }
 
     // Calculate date_of_birth from age if age is provided but date_of_birth is not
@@ -217,9 +220,16 @@ export async function createErpUser(req, res, next) {
     // Use employment_status or default to ACTIVE
     const empStatus = body.employment_status || 'ACTIVE';
 
-    // Resolve manager_id if manager_erp_user_id is provided
+    // Check if role is ADMIN or SYSTEM_ADMINISTRATOR - skip employees table for these roles
+    const role = (body.role || '').toUpperCase();
+    const isAdminRole = role === 'ADMIN' || role === 'SYSTEM_ADMINISTRATOR';
+
+    // Get created_by from authenticated user
+    const createdBy = req.user?.user_id || null;
+
+    // Resolve manager_id if manager_erp_user_id is provided (only for non-admin roles)
     let resolvedManagerId = body.manager_id || null;
-    if (body.manager_erp_user_id && !resolvedManagerId) {
+    if (!isAdminRole && body.manager_erp_user_id && !resolvedManagerId) {
       const managerErpUser = await query(
         `SELECT employee_number FROM erp_users WHERE id = $1`,
         [body.manager_erp_user_id]
@@ -235,78 +245,108 @@ export async function createErpUser(req, res, next) {
       }
     }
 
-    // Step 1: Check if employee exists, if not create it
+    // Step 1: Create employee record
+    // For ADMIN/SYSTEM_ADMINISTRATOR roles, we still need to create a minimal employee record
+    // to satisfy the foreign key constraint (erp_users.employee_number -> employees.employee_id)
+    // However, we'll mark it as a system/admin user
     let employeeExists = await query(
       `SELECT id FROM employees WHERE employee_id = $1`,
       [empNumber]
     );
 
     if (employeeExists.rowCount === 0) {
-      // Create employee record first
-      await query(
-        `
-        INSERT INTO employees (
-          employee_id, first_name, last_name, email, phone, department, position,
-          hire_date, salary, status, date_of_birth, gender,
-          address, city, state, pincode,
-          emergency_contact_name, emergency_contact_phone,
-          bank_account_number, bank_name, bank_ifsc,
-          pan_number, aadhar_number, manager_id, is_active, created_at, updated_at
-        )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10, $11, $12,
-          $13, $14, $15, $16,
-          $17, $18,
-          $19, $20, $21,
-          $22, $23, $24, true, NOW(), NOW()
-        )
-        `,
-        [
-          empNumber,
-          body.first_name,
-          body.last_name,
-          body.email,
-          body.mobile || body.phone,
-          body.department,
-          body.designation || body.position,
-          joinDate,
-          body.salary || null,
-          empStatus,
-          dateOfBirth,
-          body.gender || null,
-          body.address || null,
-          body.city || null,
-          body.state || null,
-          body.pincode || null,
-          body.emergency_contact_name || null,
-          body.emergency_contact_phone || null,
-          body.bank_account_number || null,
-          body.bank_name || null,
-          body.bank_ifsc || null,
-          body.pan_number || null,
-          body.aadhar_number || null,
-          resolvedManagerId
-        ]
-      );
+      if (isAdminRole) {
+        // For admin roles, create minimal employee record to satisfy FK constraint
+        await query(
+          `
+          INSERT INTO employees (
+            employee_id, first_name, last_name, email, phone, department, position,
+            hire_date, status, is_active, created_at, updated_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, true, NOW(), NOW()
+          )
+          `,
+          [
+            empNumber,
+            body.first_name,
+            body.last_name,
+            body.email,
+            body.mobile || body.phone || null,
+            body.department || 'ADMINISTRATION',
+            body.designation || body.position || 'System Administrator',
+            joinDate,
+            'ACTIVE'
+          ]
+        );
+      } else {
+        // For non-admin roles, create full employee record
+        await query(
+          `
+          INSERT INTO employees (
+            employee_id, first_name, last_name, email, phone, department, position,
+            hire_date, salary, status, date_of_birth, gender,
+            address, city, state, pincode,
+            emergency_contact_name, emergency_contact_phone,
+            bank_account_number, bank_name, bank_ifsc,
+            pan_number, aadhar_number, manager_id, is_active, created_at, updated_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, $11, $12,
+            $13, $14, $15, $16,
+            $17, $18,
+            $19, $20, $21,
+            $22, $23, $24, true, NOW(), NOW()
+          )
+          `,
+          [
+            empNumber,
+            body.first_name,
+            body.last_name,
+            body.email,
+            body.mobile || body.phone,
+            body.department,
+            body.designation || body.position,
+            joinDate,
+            body.salary || null,
+            empStatus,
+            dateOfBirth,
+            body.gender || null,
+            body.address || null,
+            body.city || null,
+            body.state || null,
+            body.pincode || null,
+            body.emergency_contact_name || null,
+            body.emergency_contact_phone || null,
+            body.bank_account_number || null,
+            body.bank_name || null,
+            body.bank_ifsc || null,
+            body.pan_number || null,
+            body.aadhar_number || null,
+            resolvedManagerId
+          ]
+        );
+      }
     }
 
     // Step 2: Insert into erp_users table
-    const result = await query(
+    const erpUserResult = await query(
       `
       INSERT INTO erp_users (
         employee_number, email, password_hash, mobile,
         first_name, last_name, username, role, gender, date_of_birth,
         employment_status, joining_date, designation, department,
         manager_name, work_phone, pan_number, aadhar_number,
-        address, city, state, pincode, notes, is_active, created_at, updated_at
+        address, city, state, pincode, notes, created_by, is_active, created_at, updated_at
       )
       VALUES (
         $1, $2, $3, $4,
         $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14,
         $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, COALESCE($24, true), NOW(), NOW()
+        $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -334,14 +374,52 @@ export async function createErpUser(req, res, next) {
         body.state,
         body.pincode,
         body.notes,
-        body.is_active
+        createdBy,
+        body.is_active !== undefined ? body.is_active : true
+      ]
+    );
+
+    const erpUser = erpUserResult.rows[0];
+
+    // Step 3: Insert into users table (link to erp_users via erp_user_id)
+    const fullName = [body.first_name, body.last_name].filter(Boolean).join(' ') || null;
+    const userResult = await query(
+      `
+      INSERT INTO users (
+        email, password_hash, full_name, phone, role, department,
+        erp_user_id, is_active, created_at, updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, NOW(), NOW()
+      )
+      RETURNING id
+      `,
+      [
+        body.email,
+        passwordHash,
+        fullName,
+        body.mobile || body.phone,
+        body.role,
+        body.department,
+        erpUser.id, // Link to erp_users
+        body.is_active !== undefined ? body.is_active : true
       ]
     );
 
     // Format response according to spec (exclude password_hash)
-    const formattedUser = formatErpUserResponse(result.rows[0]);
+    const formattedUser = formatErpUserResponse(erpUser);
 
-    return res.status(201).json(formattedUser);
+    return res.status(201).json({
+      success: true,
+      data: {
+        erp_user: formattedUser,
+        user_id: userResult.rows[0].id,
+        employee_created: true, // Always created (minimal for admin roles due to FK constraint)
+        employee_type: isAdminRole ? 'minimal' : 'full'
+      },
+      message: 'ERP user created successfully'
+    });
   } catch (err) {
     next(err);
   }
