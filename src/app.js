@@ -26,6 +26,7 @@ import customersRoutes from './routes/customers.routes.js';
 import workforceRoutes from './routes/workforce.routes.js';
 import hrRoutes from './routes/hr.routes.js';
 import tasksRoutes from './routes/tasks.routes.js';
+import marketingRoutes from './routes/marketing.routes.js';
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use(`${base}`, productsRoutes);
 app.use(`${base}/customers`, customersRoutes);
 app.use(`${base}/workforce`, workforceRoutes);
 app.use(`${base}/tasks`, tasksRoutes);
+app.use(`${base}/marketing`, marketingRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {
