@@ -52,10 +52,14 @@ export async function listPurchaseOrders(req, res, next) {
 
     const dataRes = await query(
       `
-      SELECT *
-      FROM purchase_orders
+      SELECT 
+        po.*,
+        COALESCE(po.supplier_name, v.vendor_name) as supplier_name,
+        v.vendor_name as vendor_name_from_table
+      FROM purchase_orders po
+      LEFT JOIN vendors v ON po.supplier_id = v.id
       ${where}
-      ORDER BY created_at DESC
+      ORDER BY po.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
       [...params, limit, offset]
@@ -64,7 +68,7 @@ export async function listPurchaseOrders(req, res, next) {
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM purchase_orders
+      FROM purchase_orders po
       ${where}
       `,
       params
