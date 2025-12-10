@@ -19,6 +19,7 @@ import manufacturingRoutes from './routes/manufacturing.routes.js';
 import procurementRoutes from './routes/procurement.routes.js';
 import ordersRoutes from './routes/orders.routes.js'; 
 import warehouseRoutes from './routes/warehouse.routes.js';
+import supplyChainRoutes from './routes/supplyChain.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import productsRoutes from './routes/products.routes.js';
@@ -28,6 +29,7 @@ import hrRoutes from './routes/hr.routes.js';
 import tasksRoutes from './routes/tasks.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
 import invoicesRoutes from './routes/invoices.routes.js';
+import marketingRoutes from './routes/marketing.routes.js';
 
 const app = express();
 
@@ -55,6 +57,7 @@ app.use(`${base}/manufacturing`, manufacturingRoutes);
 app.use(`${base}/procurement`, procurementRoutes);
 app.use(`${base}/orders`, ordersRoutes);
 app.use(`${base}/warehouse`, warehouseRoutes);
+app.use(`${base}/supply-chain`, supplyChainRoutes);
 app.use(`${base}/projects`, projectsRoutes);
 app.use(`${base}/upload`, uploadRoutes);
 app.use(`${base}`, productsRoutes);
@@ -63,6 +66,7 @@ app.use(`${base}/workforce`, workforceRoutes);
 app.use(`${base}/tasks`, tasksRoutes);
 app.use(`${base}/reports`, reportsRoutes);
 app.use(`${base}/invoices`, invoicesRoutes);
+app.use(`${base}/marketing`, marketingRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {

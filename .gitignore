@@ -54,6 +54,7 @@ tmp/
 *.sqlite
 *.sqlite3
 *.db
+database/
 
 # OS specific files
 # macOS
