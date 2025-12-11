@@ -46,13 +46,17 @@ export async function listProducts(req, res, next) {
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    // data query
+    // data query - join with inventory_stock to get quantity_available
     const dataRes = await query(
       `
-      SELECT *
-      FROM products
+      SELECT 
+        p.*,
+        COALESCE(SUM(s.quantity_available), 0) as quantity_available
+      FROM products p
+      LEFT JOIN inventory_stock s ON p.id = s.product_id
       ${where}
-      ORDER BY created_at DESC
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
       [...params, limit, offset]
@@ -89,9 +93,15 @@ export async function getProductById(req, res, next) {
 
     const result = await query(
       `
-      SELECT *
-      FROM products
-      WHERE id = $1
+      SELECT 
+        p.*,
+        COALESCE(SUM(s.quantity_available), 0) as quantity_available,
+        MAX(s.warehouse_id) as warehouse_id,
+        MAX(s.quantity_on_hand) as quantity_on_hand
+      FROM products p
+      LEFT JOIN inventory_stock s ON p.id = s.product_id
+      WHERE p.id = $1
+      GROUP BY p.id
       `,
       [id]
     );
@@ -109,6 +119,64 @@ export async function getProductById(req, res, next) {
     });
   } catch (err) {
     next(err);
+  }
+}
+
+// Helper function to generate product code
+async function generateProductCode() {
+  try {
+    const year = new Date().getFullYear();
+    const seqRes = await query(
+      `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
+    );
+    const nextId = seqRes.rows[0]?.next_id || 1;
+    return `PROD-${year}-${String(nextId).padStart(4, '0')}`;
+  } catch (err) {
+    const year = new Date().getFullYear();
+    const timestamp = Date.now().toString().slice(-6);
+    return `PROD-${year}-${timestamp}`;
+  }
+}
+
+// Helper function to generate HSN code
+async function generateHsnCode() {
+  try {
+    const seqRes = await query(
+      `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
+    );
+    const nextId = seqRes.rows[0]?.next_id || 1;
+    return `HSN-${String(nextId).padStart(6, '0')}`;
+  } catch (err) {
+    const timestamp = Date.now().toString().slice(-8);
+    return `HSN-${timestamp}`;
+  }
+}
+
+// Helper function to generate barcode
+async function generateBarcode() {
+  try {
+    const seqRes = await query(
+      `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
+    );
+    const nextId = seqRes.rows[0]?.next_id || 1;
+    return `BAR-${String(nextId).padStart(8, '0')}`;
+  } catch (err) {
+    const timestamp = Date.now().toString();
+    return `BAR-${timestamp}`;
+  }
+}
+
+// Helper function to generate SKU
+async function generateSku() {
+  try {
+    const seqRes = await query(
+      `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM products`
+    );
+    const nextId = seqRes.rows[0]?.next_id || 1;
+    return `SKU-${String(nextId).padStart(6, '0')}`;
+  } catch (err) {
+    const timestamp = Date.now().toString().slice(-6);
+    return `SKU-${timestamp}`;
   }
 }
 
@@ -131,16 +199,12 @@ export async function createProduct(req, res, next) {
       reorder_level,
       reorder_quantity,
       supplier_id,
-      is_active = true
+      is_active = true,
+      quantity_on_hand,
+      warehouse_id
     } = req.body;
 
     // Validate required fields
-    if (!product_code) {
-      return res.status(400).json({
-        success: false,
-        message: 'product_code is required'
-      });
-    }
     if (!name) {
       return res.status(400).json({
         success: false,
@@ -153,6 +217,12 @@ export async function createProduct(req, res, next) {
         message: 'unit_of_measure is required'
       });
     }
+
+    // Auto-generate fields if not provided
+    const finalProductCode = product_code || await generateProductCode();
+    const finalHsnCode = hsn_code || await generateHsnCode();
+    const finalBarcode = barcode || await generateBarcode();
+    const finalSku = sku || await generateSku();
 
     const insertRes = await query(
       `
@@ -182,7 +252,7 @@ export async function createProduct(req, res, next) {
       RETURNING *
       `,
       [
-        product_code,
+        finalProductCode,
         name,
         description || null,
         category || null,
@@ -191,9 +261,9 @@ export async function createProduct(req, res, next) {
         cost_price || null,
         selling_price || null,
         tax_rate || null,
-        hsn_code || null,
-        barcode || null,
-        sku || null,
+        finalHsnCode,
+        finalBarcode,
+        finalSku,
         reorder_level || null,
         reorder_quantity || null,
         supplier_id || null,
@@ -201,10 +271,34 @@ export async function createProduct(req, res, next) {
       ]
     );
 
+    const product = insertRes.rows[0];
+
+    // Create inventory_stock record if quantity_on_hand is provided
+    if (quantity_on_hand !== undefined && quantity_on_hand !== null && warehouse_id) {
+      await query(
+        `
+        INSERT INTO inventory_stock (
+          product_id,
+          warehouse_id,
+          quantity_on_hand,
+          quantity_reserved,
+          quantity_available
+        )
+        VALUES ($1, $2, $3, 0, $3)
+        ON CONFLICT (product_id, warehouse_id) 
+        DO UPDATE SET 
+          quantity_on_hand = inventory_stock.quantity_on_hand + $3,
+          quantity_available = inventory_stock.quantity_available + $3,
+          updated_at = NOW()
+        `,
+        [product.id, warehouse_id, quantity_on_hand]
+      );
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: insertRes.rows[0]
+      data: product
     });
   } catch (err) {
     // Handle unique constraint violation
@@ -238,7 +332,9 @@ export async function updateProduct(req, res, next) {
       reorder_level,
       reorder_quantity,
       supplier_id,
-      is_active
+      is_active,
+      quantity_on_hand,
+      warehouse_id
     } = req.body;
 
     const updateRes = await query(
@@ -293,10 +389,45 @@ export async function updateProduct(req, res, next) {
       });
     }
 
+    const product = updateRes.rows[0];
+
+    // Update inventory_stock if quantity_on_hand is provided
+    if (quantity_on_hand !== undefined && quantity_on_hand !== null && warehouse_id) {
+      // Check if stock record exists
+      const stockRes = await query(
+        `SELECT * FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2`,
+        [id, warehouse_id]
+      );
+
+      if (stockRes.rowCount > 0) {
+        // Update existing stock
+        await query(
+          `
+          UPDATE inventory_stock
+          SET
+            quantity_on_hand = $1,
+            quantity_available = $1 - quantity_reserved,
+            updated_at = NOW()
+          WHERE product_id = $2 AND warehouse_id = $3
+          `,
+          [quantity_on_hand, id, warehouse_id]
+        );
+      } else {
+        // Create new stock record
+        await query(
+          `
+          INSERT INTO inventory_stock (product_id, warehouse_id, quantity_on_hand, quantity_reserved, quantity_available)
+          VALUES ($1, $2, $3, 0, $3)
+          `,
+          [id, warehouse_id, quantity_on_hand]
+        );
+      }
+    }
+
     return res.json({
       success: true,
       message: 'Product updated successfully',
-      data: updateRes.rows[0]
+      data: product
     });
   } catch (err) {
     // Handle unique constraint violation
@@ -306,6 +437,29 @@ export async function updateProduct(req, res, next) {
         message: 'Product code or SKU already exists'
       });
     }
+    next(err);
+  }
+}
+
+// GET /api/v1/products/units/list - Get unique unit_of_measure values
+export async function listUnitOfMeasures(req, res, next) {
+  try {
+    const result = await query(
+      `
+      SELECT DISTINCT unit_of_measure
+      FROM products
+      WHERE unit_of_measure IS NOT NULL AND unit_of_measure != ''
+      ORDER BY unit_of_measure
+      `
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        units: result.rows.map(r => r.unit_of_measure)
+      }
+    });
+  } catch (err) {
     next(err);
   }
 }

@@ -10,6 +10,7 @@ router.use(authMiddleware);
 
 // 📦 Products
 router.get('/products', ProductsController.listProducts);
+router.get('/products/units/list', ProductsController.listUnitOfMeasures);
 router.get('/products/:id', ProductsController.getProductById);
 router.post('/products', ProductsController.createProduct);
 router.put('/products/:id', ProductsController.updateProduct);
