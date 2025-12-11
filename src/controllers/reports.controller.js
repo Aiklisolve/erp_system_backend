@@ -104,6 +104,19 @@ function normalizeFileName(fileName, format) {
   return `${nameWithoutExt}.${extension}`;
 }
 
+// Helper function to sanitize CSV cell values
+function sanitizeCsvCell(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  let cellValue = String(value);
+  // Replace newlines and carriage returns with spaces to prevent CSV breakage
+  cellValue = cellValue.replace(/\r\n/g, ' ').replace(/\n/g, ' ').replace(/\r/g, ' ');
+  // Escape quotes
+  cellValue = cellValue.replace(/"/g, '""');
+  return cellValue;
+}
+
 // Helper function to generate file name
 function generateFileName(reportName, format) {
   const sanitizedName = reportName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -1280,6 +1293,20 @@ export async function downloadReport(req, res, next) {
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
       
       // Create JSON object with report data
+      // Parse filters if it's a string (JSONB from database)
+      let filtersObj = {};
+      if (report.filters) {
+        if (typeof report.filters === 'string') {
+          try {
+            filtersObj = JSON.parse(report.filters);
+          } catch (e) {
+            filtersObj = {};
+          }
+        } else {
+          filtersObj = report.filters;
+        }
+      }
+      
       const jsonData = {
         report_code: report.report_code,
         report_type: report.report_type,
@@ -1287,15 +1314,31 @@ export async function downloadReport(req, res, next) {
         generated_at: report.generated_at,
         start_date: report.start_date,
         end_date: report.end_date,
-        filters: report.filters,
+        filters: filtersObj,
         data: {
           headers: reportData.headers || [],
           rows: reportData.rows || []
         }
       };
       
-      // Convert to formatted JSON string
-      const jsonContent = JSON.stringify(jsonData, null, 2);
+      // Convert to formatted JSON string with proper error handling
+      let jsonContent;
+      try {
+        jsonContent = JSON.stringify(jsonData, null, 2);
+      } catch (e) {
+        console.error(`[Download Report ${id}] JSON stringify error:`, e);
+        // Fallback: create a simpler structure
+        jsonContent = JSON.stringify({
+          report_code: report.report_code,
+          report_type: report.report_type,
+          report_name: report.report_name,
+          error: 'Failed to serialize report data',
+          data: {
+            headers: reportData.headers || [],
+            rows: []
+          }
+        }, null, 2);
+      }
       const buffer = Buffer.from(jsonContent, 'utf-8');
       res.setHeader('Content-Length', buffer.length);
       
@@ -1335,7 +1378,7 @@ export async function downloadReport(req, res, next) {
       // Add headers (always include headers for valid CSV)
       if (reportData.headers && reportData.headers.length > 0) {
         const headerRow = reportData.headers.map(h => {
-          const headerStr = String(h || '').trim().replace(/"/g, '""');
+          const headerStr = sanitizeCsvCell(h);
           return `"${headerStr}"`;
         }).join(',');
         csvContent += headerRow + '\r\n'; // Use \r\n for Windows compatibility
@@ -1345,20 +1388,26 @@ export async function downloadReport(req, res, next) {
       }
       
       // Add data rows
+      const headerCount = reportData.headers?.length || 0;
       if (reportData.rows && reportData.rows.length > 0) {
         reportData.rows.forEach(row => {
-          if (Array.isArray(row) && row.length > 0) {
-            const rowContent = row.map(cell => {
-              const cellValue = cell === null || cell === undefined ? '' : String(cell).trim();
-              return `"${cellValue.replace(/"/g, '""')}"`;
+          if (Array.isArray(row)) {
+            // Ensure row has same number of columns as headers
+            const normalizedRow = [];
+            for (let i = 0; i < headerCount; i++) {
+              normalizedRow.push(row[i] !== undefined ? row[i] : '');
+            }
+            
+            const rowContent = normalizedRow.map(cell => {
+              const cellValue = sanitizeCsvCell(cell);
+              return `"${cellValue}"`;
             }).join(',');
             csvContent += rowContent + '\r\n'; // Use \r\n for Windows compatibility
           }
         });
       } else {
         // If no data rows, add a message row matching header count
-        const headerCount = reportData.headers?.length || 1;
-        const emptyCells = ',""'.repeat(Math.max(0, headerCount - 1));
+        const emptyCells = headerCount > 1 ? ',""'.repeat(headerCount - 1) : '';
         csvContent += `"No data found"${emptyCells}\r\n`;
       }
       
@@ -1414,7 +1463,7 @@ export async function downloadReport(req, res, next) {
       // Add headers (always include headers for valid CSV)
       if (reportData.headers && reportData.headers.length > 0) {
         const headerRow = reportData.headers.map(h => {
-          const headerStr = String(h || '').trim().replace(/"/g, '""');
+          const headerStr = sanitizeCsvCell(h);
           return `"${headerStr}"`;
         }).join(',');
         csvContent += headerRow + '\r\n'; // Use \r\n for Windows compatibility
@@ -1423,19 +1472,26 @@ export async function downloadReport(req, res, next) {
       }
       
       // Add data rows
+      const headerCountExcel = reportData.headers?.length || 0;
       if (reportData.rows && reportData.rows.length > 0) {
         reportData.rows.forEach(row => {
-          if (Array.isArray(row) && row.length > 0) {
-            const rowContent = row.map(cell => {
-              const cellValue = cell === null || cell === undefined ? '' : String(cell).trim();
-              return `"${cellValue.replace(/"/g, '""')}"`;
+          if (Array.isArray(row)) {
+            // Ensure row has same number of columns as headers
+            const normalizedRow = [];
+            for (let i = 0; i < headerCountExcel; i++) {
+              normalizedRow.push(row[i] !== undefined ? row[i] : '');
+            }
+            
+            const rowContent = normalizedRow.map(cell => {
+              const cellValue = sanitizeCsvCell(cell);
+              return `"${cellValue}"`;
             }).join(',');
             csvContent += rowContent + '\r\n';
           }
         });
       } else {
-        const headerCount = reportData.headers?.length || 1;
-        const emptyCells = ',""'.repeat(Math.max(0, headerCount - 1));
+        // If no data rows, add a message row matching header count
+        const emptyCells = headerCountExcel > 1 ? ',""'.repeat(headerCountExcel - 1) : '';
         csvContent += `"No data found"${emptyCells}\r\n`;
       }
       
