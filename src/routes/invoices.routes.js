@@ -11,6 +11,9 @@ router.use(authMiddleware);
 // List invoices
 router.get('/', InvoicesController.listInvoices);
 
+// List all invoice items (must be before /:id route)
+router.get('/items', InvoicesController.listInvoiceItems);
+
 // Create invoice
 router.post('/', InvoicesController.createInvoice);
 

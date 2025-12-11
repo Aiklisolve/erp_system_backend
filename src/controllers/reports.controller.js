@@ -1,6 +1,9 @@
 // src/controllers/reports.controller.js
 import { query } from '../config/database.js';
 import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const PDFDocument = require('pdfkit');
 // TODO: Install exceljs for proper Excel file generation: npm install exceljs
 // import ExcelJS from 'exceljs';
 
@@ -57,10 +60,10 @@ function generateFileUrl(reportCode, format) {
   let extension;
   switch (format.toUpperCase()) {
     case 'EXCEL':
-      extension = 'csv'; // Use .csv for now
+      extension = 'csv'; // Using .csv for now (Excel can open CSV files)
       break;
     case 'PDF':
-      extension = 'txt'; // Use .txt for now (not generating actual PDF)
+      extension = 'pdf'; // Now generating actual PDF files
       break;
     case 'CSV':
       extension = 'csv';
@@ -76,33 +79,36 @@ function generateFileUrl(reportCode, format) {
   return `/api/v1/reports/files/${reportCode}.${extension}`;
 }
 
+// Helper function to get file extension for a format
+function getFileExtension(format) {
+  switch (format.toUpperCase()) {
+    case 'EXCEL':
+      return 'csv'; // Using .csv for now (Excel can open CSV files natively)
+    case 'PDF':
+      return 'pdf'; // Now generating actual PDF files with pdfkit
+    case 'CSV':
+      return 'csv';
+    case 'JSON':
+      return 'json';
+    default:
+      return 'txt';
+  }
+}
+
+// Helper function to normalize file name to ensure correct extension
+function normalizeFileName(fileName, format) {
+  if (!fileName) return null;
+  const extension = getFileExtension(format);
+  // Remove any existing extension and add correct one
+  const nameWithoutExt = fileName.replace(/\.[^/.]+$/, '');
+  return `${nameWithoutExt}.${extension}`;
+}
+
 // Helper function to generate file name
 function generateFileName(reportName, format) {
   const sanitizedName = reportName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
   const timestamp = new Date().toISOString().split('T')[0];
-  
-  // Map format to correct file extension
-  let extension;
-  switch (format.toUpperCase()) {
-    case 'EXCEL':
-      // Use .csv extension for now (Excel can open CSV)
-      // TODO: Change to .xlsx when exceljs is installed
-      extension = 'csv';
-      break;
-    case 'PDF':
-      // Use .txt extension for now (we're generating text, not PDF)
-      // TODO: Change to .pdf when pdfkit is installed
-      extension = 'txt';
-      break;
-    case 'CSV':
-      extension = 'csv';
-      break;
-    case 'JSON':
-      extension = 'json';
-      break;
-    default:
-      extension = 'txt';
-  }
+  const extension = getFileExtension(format);
   
   return `${sanitizedName}_${timestamp}.${extension}`;
 }
@@ -1261,35 +1267,64 @@ export async function downloadReport(req, res, next) {
     
     // Ensure response is not JSON by setting proper headers first
     if (report.format === 'JSON') {
-      // JSON format - proper JSON response
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      const fileName = report.file_name || `report_${report.report_code}.json`;
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      // JSON format - proper JSON file download
+      const fileName = normalizeFileName(report.file_name, report.format) || `report_${report.report_code}.json`;
       
-      return res.json({
+      // Set headers first - critical for file downloads
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
+      
+      // Create JSON object with report data
+      const jsonData = {
         report_code: report.report_code,
         report_type: report.report_type,
         report_name: report.report_name,
         generated_at: report.generated_at,
+        start_date: report.start_date,
+        end_date: report.end_date,
+        filters: report.filters,
         data: {
-          headers: reportData.headers,
-          rows: reportData.rows
+          headers: reportData.headers || [],
+          rows: reportData.rows || []
         }
-      });
-    } else if (report.format === 'CSV' || report.format === 'EXCEL') {
-      // CSV/Excel format - proper CSV file
-      // IMPORTANT: Use .csv extension for both CSV and EXCEL formats
-      // because we're sending CSV content, not actual Excel files
-      // Excel can open CSV files natively, and this prevents frontend validation errors
-      const fileName = report.file_name 
-        ? report.file_name.replace(/\.(xlsx|xls)$/i, '.csv')
-        : `report_${report.report_code}.csv`;
+      };
+      
+      // Convert to formatted JSON string
+      const jsonContent = JSON.stringify(jsonData, null, 2);
+      const buffer = Buffer.from(jsonContent, 'utf-8');
+      res.setHeader('Content-Length', buffer.length);
+      
+      console.log(`[Download Report ${id}] JSON File Details:`);
+      console.log(`  - Format: ${report.format}`);
+      console.log(`  - FileName: ${fileName}`);
+      console.log(`  - Content-Type: application/json; charset=utf-8`);
+      console.log(`  - Headers: ${reportData.headers?.length || 0}`);
+      console.log(`  - Rows: ${reportData.rows?.length || 0}`);
+      
+      if (res.headersSent) {
+        console.error(`[Download Report ${id}] ERROR: Headers already sent! Cannot send file.`);
+        return;
+      }
+      
+      res.end(buffer);
+      return;
+    } else if (report.format === 'CSV') {
+      // CSV format - proper CSV file
+      const fileName = normalizeFileName(report.file_name, report.format) || `report_${report.report_code}.csv`;
       
       // Set headers first - critical for file downloads
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
       
       // Add BOM for UTF-8 to ensure Excel opens it correctly
       const BOM = '\uFEFF';
@@ -1342,7 +1377,6 @@ export async function downloadReport(req, res, next) {
       console.log(`  - CSV Content preview (first 300 chars):`, csvContent.substring(0, 300));
       
       // Send as Buffer to ensure proper file download
-      // Use res.end() to ensure response is sent without any JSON wrapping
       const buffer = Buffer.from(csvContent, 'utf-8');
       res.setHeader('Content-Length', buffer.length);
       
@@ -1353,33 +1387,17 @@ export async function downloadReport(req, res, next) {
       }
       
       console.log(`[Download Report ${id}] Sending CSV file - Size: ${buffer.length} bytes`);
-      console.log(`[Download Report ${id}] Response headers:`, {
-        'Content-Type': res.getHeader('Content-Type'),
-        'Content-Disposition': res.getHeader('Content-Disposition'),
-        'Content-Length': res.getHeader('Content-Length')
-      });
       
       // CRITICAL: Use res.end() not res.send() to bypass Express JSON middleware
-      // Ensure response is sent as binary file, not JSON
-      try {
-        res.end(buffer);
-        console.log(`[Download Report ${id}] File sent successfully`);
-        return;
-      } catch (sendError) {
-        console.error(`[Download Report ${id}] Error sending file:`, sendError);
-        throw sendError;
-      }
-    } else if (report.format === 'PDF') {
-      // PDF format - return text content with .txt extension
-      // IMPORTANT: Use .txt extension because we're sending text content, not actual PDF
-      // This prevents frontend validation errors
-      // TODO: Generate proper PDF using pdfkit library (npm install pdfkit)
-      const fileName = report.file_name 
-        ? report.file_name.replace(/\.pdf$/i, '.txt')
-        : `report_${report.report_code}.txt`;
+      res.end(buffer);
+      return;
+    } else if (report.format === 'EXCEL') {
+      // Excel format - currently generates CSV (workaround until exceljs is installed)
+      // Excel can open CSV files natively
+      const fileName = normalizeFileName(report.file_name, report.format) || `report_${report.report_code}.csv`;
       
       // Set headers first - critical for file downloads
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -1387,39 +1405,232 @@ export async function downloadReport(req, res, next) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
       
-      // Generate text content
-      let pdfContent = `Report: ${report.report_name}\n`;
-      pdfContent += `Report Code: ${report.report_code}\n`;
-      pdfContent += `Report Type: ${report.report_type}\n`;
-      pdfContent += `Generated At: ${report.generated_at || new Date().toISOString()}\n\n`;
-      pdfContent += `--- Report Data ---\n\n`;
+      // Add BOM for UTF-8 to ensure Excel opens it correctly
+      const BOM = '\uFEFF';
       
+      // Generate CSV content with actual data
+      let csvContent = BOM;
+      
+      // Add headers (always include headers for valid CSV)
       if (reportData.headers && reportData.headers.length > 0) {
-        pdfContent += reportData.headers.join(' | ') + '\n';
-        pdfContent += '-'.repeat(reportData.headers.join(' | ').length) + '\n';
+        const headerRow = reportData.headers.map(h => {
+          const headerStr = String(h || '').trim().replace(/"/g, '""');
+          return `"${headerStr}"`;
+        }).join(',');
+        csvContent += headerRow + '\r\n'; // Use \r\n for Windows compatibility
+      } else {
+        csvContent += '"No Data"\r\n';
       }
       
+      // Add data rows
       if (reportData.rows && reportData.rows.length > 0) {
         reportData.rows.forEach(row => {
-          pdfContent += row.map(cell => String(cell || '')).join(' | ') + '\n';
+          if (Array.isArray(row) && row.length > 0) {
+            const rowContent = row.map(cell => {
+              const cellValue = cell === null || cell === undefined ? '' : String(cell).trim();
+              return `"${cellValue.replace(/"/g, '""')}"`;
+            }).join(',');
+            csvContent += rowContent + '\r\n';
+          }
         });
+      } else {
+        const headerCount = reportData.headers?.length || 1;
+        const emptyCells = ',""'.repeat(Math.max(0, headerCount - 1));
+        csvContent += `"No data found"${emptyCells}\r\n`;
       }
       
-      const pdfBuffer = Buffer.from(pdfContent, 'utf-8');
-      res.setHeader('Content-Length', pdfBuffer.length);
+      // Ensure CSV ends with newline
+      if (!csvContent.endsWith('\r\n') && !csvContent.endsWith('\n')) {
+        csvContent += '\r\n';
+      }
       
-      console.log(`[Download Report ${id}] PDF File Details:`);
+      console.log(`[Download Report ${id}] Excel File Details (CSV format):`);
       console.log(`  - Format: ${report.format}`);
       console.log(`  - FileName: ${fileName}`);
-      console.log(`  - Content-Type: text/plain; charset=utf-8`);
-      console.log(`  - File size: ${pdfBuffer.length} bytes`);
+      console.log(`  - Content-Type: text/csv; charset=utf-8`);
+      console.log(`  - Headers count: ${reportData.headers?.length || 0}`);
+      console.log(`  - Rows count: ${reportData.rows?.length || 0}`);
+      console.log(`  - Note: Generating CSV format (Excel can open CSV files)`);
+      
+      const buffer = Buffer.from(csvContent, 'utf-8');
+      res.setHeader('Content-Length', buffer.length);
       
       if (res.headersSent) {
         console.error(`[Download Report ${id}] ERROR: Headers already sent! Cannot send file.`);
         return;
       }
       
-      res.end(pdfBuffer);
+      res.end(buffer);
+      return;
+    } else if (report.format === 'PDF') {
+      // PDF format - generate actual PDF using pdfkit
+      const fileName = normalizeFileName(report.file_name, report.format) || `report_${report.report_code}.pdf`;
+      
+      // Set headers first - critical for file downloads
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
+      
+      // Create PDF document
+      const doc = new PDFDocument({ 
+        margin: 50,
+        size: 'A4'
+      });
+      
+      // Pipe PDF to response
+      doc.pipe(res);
+      
+      // Header Section
+      doc.fontSize(20).font('Helvetica-Bold').text('REPORT', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(12).font('Helvetica').text(report.report_name || 'Report', { align: 'center' });
+      doc.moveDown(1);
+      
+      // Report Information Section
+      let yPosition = 120;
+      const leftMargin = 50;
+      
+      doc.fontSize(10).font('Helvetica-Bold').text('Report Information:', leftMargin, yPosition);
+      yPosition += 20;
+      doc.font('Helvetica').fontSize(9);
+      
+      doc.text(`Report Code: ${report.report_code || 'N/A'}`, leftMargin, yPosition);
+      yPosition += 15;
+      doc.text(`Report Type: ${report.report_type || 'N/A'}`, leftMargin, yPosition);
+      yPosition += 15;
+      
+      if (report.start_date || report.end_date) {
+        const dateRange = [
+          report.start_date ? new Date(report.start_date).toLocaleDateString() : '',
+          report.end_date ? new Date(report.end_date).toLocaleDateString() : ''
+        ].filter(Boolean).join(' - ');
+        doc.text(`Date Range: ${dateRange || 'N/A'}`, leftMargin, yPosition);
+        yPosition += 15;
+      }
+      
+      doc.text(`Generated At: ${report.generated_at ? new Date(report.generated_at).toLocaleDateString() : new Date().toLocaleDateString()}`, leftMargin, yPosition);
+      yPosition += 20;
+      
+      // Data Table Section
+      if (reportData.headers && reportData.headers.length > 0 && reportData.rows && reportData.rows.length > 0) {
+        // Draw table header line
+        doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
+        yPosition += 10;
+        
+        // Table Headers
+        doc.fontSize(9).font('Helvetica-Bold');
+        const columnWidth = (545 - leftMargin) / reportData.headers.length;
+        reportData.headers.forEach((header, index) => {
+          doc.text(String(header || ''), leftMargin + (index * columnWidth), yPosition, {
+            width: columnWidth - 5,
+            ellipsis: true
+          });
+        });
+        yPosition += 15;
+        
+        // Draw separator line
+        doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
+        yPosition += 10;
+        
+        // Table Rows
+        doc.font('Helvetica').fontSize(8);
+        reportData.rows.forEach((row, rowIndex) => {
+          // Check if we need a new page
+          if (yPosition > 700) {
+            doc.addPage();
+            yPosition = 50;
+          }
+          
+          // Draw row data
+          row.forEach((cell, colIndex) => {
+            doc.text(String(cell || ''), leftMargin + (colIndex * columnWidth), yPosition, {
+              width: columnWidth - 5,
+              ellipsis: true
+            });
+          });
+          yPosition += 12;
+          
+          // Add subtle line between rows (every 5 rows)
+          if ((rowIndex + 1) % 5 === 0 && rowIndex < reportData.rows.length - 1) {
+            doc.moveTo(leftMargin, yPosition - 2).lineTo(545, yPosition - 2).stroke();
+            yPosition += 5;
+          }
+        });
+        
+        // Draw bottom line
+        yPosition += 5;
+        doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
+        yPosition += 15;
+        
+        // Summary
+        doc.fontSize(9).font('Helvetica-Bold');
+        doc.text(`Total Records: ${reportData.rows.length}`, leftMargin, yPosition);
+      } else {
+        // No data message
+        doc.fontSize(10).font('Helvetica').text('No data available for this report.', leftMargin, yPosition);
+      }
+      
+      // Footer - add footer to each page after all content is written
+      // We need to add footers before finalizing, using the buffered page range
+      try {
+        const range = doc.bufferedPageRange();
+        if (range && range.count > 0) {
+          const totalPages = range.count;
+          const startPage = range.start;
+          
+          // Add footer to each page
+          for (let i = 0; i < totalPages; i++) {
+            const pageIndex = startPage + i;
+            doc.switchToPage(pageIndex);
+            doc.fontSize(8).font('Helvetica').fillColor('gray');
+            doc.text(
+              `Page ${i + 1} of ${totalPages}`,
+              leftMargin,
+              doc.page.height - 30,
+              { align: 'center', width: 495 }
+            );
+            doc.text(
+              `Generated on: ${new Date().toLocaleDateString()}`,
+              leftMargin,
+              doc.page.height - 20,
+              { align: 'right', width: 495 }
+            );
+          }
+        } else {
+          // Fallback: add footer to current page if range is not available
+          doc.fontSize(8).font('Helvetica').fillColor('gray');
+          doc.text(
+            `Page 1 of 1`,
+            leftMargin,
+            doc.page.height - 30,
+            { align: 'center', width: 495 }
+          );
+          doc.text(
+            `Generated on: ${new Date().toLocaleDateString()}`,
+            leftMargin,
+            doc.page.height - 20,
+            { align: 'right', width: 495 }
+          );
+        }
+      } catch (err) {
+        console.error(`[Download Report ${id}] Error adding footers:`, err.message);
+        // Continue without footers if there's an error
+      }
+      
+      // Finalize PDF
+      doc.end();
+      
+      console.log(`[Download Report ${id}] PDF File Details:`);
+      console.log(`  - Format: ${report.format}`);
+      console.log(`  - FileName: ${fileName}`);
+      console.log(`  - Content-Type: application/pdf`);
+      console.log(`  - Headers: ${reportData.headers?.length || 0}`);
+      console.log(`  - Rows: ${reportData.rows?.length || 0}`);
+      
       return;
     } else {
       // Default: return text
