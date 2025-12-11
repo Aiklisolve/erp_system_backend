@@ -10,7 +10,6 @@ import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import sessionRoutes from './routes/session.routes.js';
 import crmRoutes from './routes/crm.routes.js';
-import erpUsersRoutes from './routes/erp-users.routes.js';
 
 // New module routes (CJS is fine, Node will treat module.exports as default)
 import financeRoutes from './routes/finance.routes.js';
@@ -19,18 +18,16 @@ import manufacturingRoutes from './routes/manufacturing.routes.js';
 import procurementRoutes from './routes/procurement.routes.js';
 import ordersRoutes from './routes/orders.routes.js'; 
 import warehouseRoutes from './routes/warehouse.routes.js';
-import supplyChainRoutes from './routes/supplyChain.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import productsRoutes from './routes/products.routes.js';
 import customersRoutes from './routes/customers.routes.js';
-import workforceRoutes from './routes/workforce.routes.js';
-import hrRoutes from './routes/hr.routes.js';
-import tasksRoutes from './routes/tasks.routes.js';
-import reportsRoutes from './routes/reports.routes.js';
-import invoicesRoutes from './routes/invoices.routes.js';
-import marketingRoutes from './routes/marketing.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
+import reportsRoutes from './routes/reports.routes.js';
+
+// If/when you create these files, uncomment the imports + app.use below
+// import hrRoutes from './routes/hr.routes.js';
+// import tasksRoutes from './routes/tasks.routes.js';
 
 const app = express();
 
@@ -46,10 +43,10 @@ app.use(`${base}/auth`, authRoutes);
 app.use(`${base}/users`, userRoutes);
 app.use(`${base}/sessions`, sessionRoutes);
 app.use(`${base}/crm`, crmRoutes);
-app.use(`${base}`, erpUsersRoutes); // ERP users routes at /api/v1/erp-users
 
-// HR routes
-app.use(`${base}/hr`, hrRoutes);
+// Later, when you have HR/Tasks route files ready:
+// app.use(`${base}/hr`, hrRoutes);
+// app.use(`${base}/tasks`, tasksRoutes);
 
 // Finance, inventory, etc.
 app.use(`${base}/finance`, financeRoutes);
@@ -58,17 +55,12 @@ app.use(`${base}/manufacturing`, manufacturingRoutes);
 app.use(`${base}/procurement`, procurementRoutes);
 app.use(`${base}/orders`, ordersRoutes);
 app.use(`${base}/warehouse`, warehouseRoutes);
-app.use(`${base}/supply-chain`, supplyChainRoutes);
 app.use(`${base}/projects`, projectsRoutes);
 app.use(`${base}/upload`, uploadRoutes);
 app.use(`${base}`, productsRoutes);
 app.use(`${base}/customers`, customersRoutes);
-app.use(`${base}/workforce`, workforceRoutes);
-app.use(`${base}/tasks`, tasksRoutes);
-app.use(`${base}/reports`, reportsRoutes);
-app.use(`${base}/invoices`, invoicesRoutes);
-app.use(`${base}/marketing`, marketingRoutes);
 app.use(`${base}/dashboard`, dashboardRoutes);
+app.use(`${base}/reports`, reportsRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {
@@ -78,9 +70,5 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
-// Error handling middleware (must be last)
-import { errorHandler } from './middleware/errorHandler.js';
-app.use(errorHandler);
 
 export default app;
