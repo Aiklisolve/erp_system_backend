@@ -54,8 +54,7 @@ export async function listPurchaseOrders(req, res, next) {
       `
       SELECT 
         po.*,
-        COALESCE(po.supplier_name, v.vendor_name) as supplier_name,
-        v.vendor_name as vendor_name_from_table
+        v.vendor_name as supplier_name
       FROM purchase_orders po
       LEFT JOIN vendors v ON po.supplier_id = v.id
       ${where}
