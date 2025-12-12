@@ -1726,3 +1726,41 @@ export async function listPurchaseOrdersForAssignment(req, res, next) {
     next(err);
   }
 }
+// vendors id api//
+// src/controllers/vendors.controller.js
+
+/**
+ * GET /api/v1/vendors/list
+ * Returns vendor_id and vendor_name for dropdowns
+ */
+export async function getVendorsList(req, res) {
+  try {
+    const sql = `
+      SELECT 
+        id AS vendor_id, 
+        vendor_name, 
+        email
+      FROM vendors
+      ORDER BY vendor_name ASC;
+    `;
+
+    const result = await query(sql);
+
+    const data = result.rows.map(r => ({
+      vendor_id: r.vendor_id,
+      vendor_name: r.vendor_name,
+      email: r.email
+    }));
+
+    return res.json({
+      success: true,
+      data
+    });
+  } catch (err) {
+    console.error("getVendorsList error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch vendors"
+    });
+  }
+}

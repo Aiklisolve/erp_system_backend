@@ -2,8 +2,11 @@
 import { Router } from 'express';
 import { authMiddleware, authorize } from '../middleware/auth.js';
 import * as inventoryController from '../controllers/inventory.controller.js';
+import { getVendorsList } from "../controllers/inventory.controller.js";
 
 const router = Router();
+// vendors id api//
+router.get("/list", getVendorsList);
 
 // All inventory routes require auth
 router.use(authMiddleware);
