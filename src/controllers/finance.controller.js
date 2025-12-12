@@ -106,7 +106,7 @@ export async function listTransactions(req, res, next) {
 
     // Handle status filter (ignore if "all")
     if (status && status.toLowerCase() !== 'all') {
-      conditions.push(`status = $${idx}`);
+      conditions.push(`t.status = $${idx}`);
       params.push(status);
       idx++;
     }
@@ -114,26 +114,26 @@ export async function listTransactions(req, res, next) {
     // Handle direction/transaction_type filter (ignore if "all")
     const transactionTypeValue = direction || transaction_type;
     if (transactionTypeValue && transactionTypeValue.toLowerCase() !== 'all') {
-      conditions.push(`transaction_type = $${idx}`);
+      conditions.push(`t.transaction_type = $${idx}`);
       params.push(transactionTypeValue);
       idx++;
     }
 
     if (from_date) {
-      conditions.push(`transaction_date >= $${idx}`);
+      conditions.push(`t.transaction_date >= $${idx}`);
       params.push(from_date);
       idx++;
     }
 
     if (to_date) {
-      conditions.push(`transaction_date <= $${idx}`);
+      conditions.push(`t.transaction_date <= $${idx}`);
       params.push(to_date);
       idx++;
     }
 
     if (search) {
       conditions.push(
-        `(transaction_number ILIKE $${idx} OR category ILIKE $${idx} OR description ILIKE $${idx})`
+        `(t.transaction_number ILIKE $${idx} OR t.category ILIKE $${idx} OR t.description ILIKE $${idx})`
       );
       params.push(`%${search}%`);
       idx++;
@@ -141,18 +141,68 @@ export async function listTransactions(req, res, next) {
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    // Select fields based on include_details parameter
-    const selectFields = include_details === 'true' 
-      ? '*' 
-      : 'id, transaction_number, transaction_type, category, amount, currency, transaction_date, status';
+    // Build SELECT with related table data
+    const selectFields = `
+      t.*,
+      -- Customer data
+      json_build_object(
+        'id', c.id,
+        'customer_number', c.customer_number,
+        'name', c.name,
+        'email', c.email,
+        'phone', c.phone,
+        'company_name', c.company_name,
+        'address', c.address,
+        'city', c.city,
+        'state', c.state,
+        'country', c.country,
+        'pincode', c.pincode,
+        'gstin', c.gstin,
+        'pan_number', c.pan_number,
+        'contact_person', c.contact_person,
+        'segment', c.segment,
+        'is_active', c.is_active
+      ) as customer,
+      -- From Account data
+      json_build_object(
+        'account_id', fa_from.account_id,
+        'account_code', fa_from.account_code,
+        'account_name', fa_from.account_name,
+        'account_type', fa_from.account_type,
+        'currency', fa_from.currency,
+        'is_active', fa_from.is_active
+      ) as from_account,
+      -- To Account data (for transfers)
+      json_build_object(
+        'account_id', fa_to.account_id,
+        'account_code', fa_to.account_code,
+        'account_name', fa_to.account_name,
+        'account_type', fa_to.account_type,
+        'currency', fa_to.currency,
+        'is_active', fa_to.is_active
+      ) as to_account,
+      -- Created by user data
+      json_build_object(
+        'id', u_created.id,
+        'email', u_created.email,
+        'full_name', u_created.full_name,
+        'phone', u_created.phone,
+        'role', u_created.role,
+        'department', u_created.department
+      ) as created_by_user
+    `;
 
-    // data query
+    // data query with joins
     const dataRes = await query(
       `
       SELECT ${selectFields}
-      FROM transactions
+      FROM transactions t
+      LEFT JOIN customers c ON t.customer_id = c.id
+      LEFT JOIN finance_accounts fa_from ON t.account_id = fa_from.account_id
+      LEFT JOIN finance_accounts fa_to ON t.to_account_id = fa_to.account_id
+      LEFT JOIN users u_created ON t.created_by = u_created.id
       ${where}
-      ORDER BY transaction_date DESC
+      ORDER BY t.transaction_date DESC, t.id DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
       [...params, limit, offset]
@@ -162,7 +212,7 @@ export async function listTransactions(req, res, next) {
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM transactions
+      FROM transactions t
       ${where}
       `,
       params
@@ -189,9 +239,60 @@ export async function getTransactionById(req, res, next) {
 
     const result = await query(
       `
-      SELECT *
-      FROM transactions
-      WHERE id = $1
+      SELECT 
+        t.*,
+        -- Customer data
+        json_build_object(
+          'id', c.id,
+          'customer_number', c.customer_number,
+          'name', c.name,
+          'email', c.email,
+          'phone', c.phone,
+          'company_name', c.company_name,
+          'address', c.address,
+          'city', c.city,
+          'state', c.state,
+          'country', c.country,
+          'pincode', c.pincode,
+          'gstin', c.gstin,
+          'pan_number', c.pan_number,
+          'contact_person', c.contact_person,
+          'segment', c.segment,
+          'is_active', c.is_active
+        ) as customer,
+        -- From Account data
+        json_build_object(
+          'account_id', fa_from.account_id,
+          'account_code', fa_from.account_code,
+          'account_name', fa_from.account_name,
+          'account_type', fa_from.account_type,
+          'currency', fa_from.currency,
+          'is_active', fa_from.is_active
+        ) as from_account,
+        -- To Account data (for transfers)
+        json_build_object(
+          'account_id', fa_to.account_id,
+          'account_code', fa_to.account_code,
+          'account_name', fa_to.account_name,
+          'account_type', fa_to.account_type,
+          'currency', fa_to.currency,
+          'is_active', fa_to.is_active
+        ) as to_account,
+        -- Created by user data
+        json_build_object(
+          'id', u_created.id,
+          'email', u_created.email,
+          'full_name', u_created.full_name,
+          'phone', u_created.phone,
+          'role', u_created.role,
+          'department', u_created.department
+        ) as created_by_user
+      FROM transactions t
+      LEFT JOIN customers c ON t.customer_id = c.id
+      LEFT JOIN finance_accounts fa_from ON t.account_id = fa_from.account_id
+      LEFT JOIN finance_accounts fa_to ON t.to_account_id = fa_to.account_id
+      LEFT JOIN users u_created ON t.created_by = u_created.id
+      WHERE t.id = $1
       `,
       [id]
     );
@@ -231,8 +332,9 @@ export async function createTransaction(req, res, next) {
       payment_method,
       reference_number,
       description,
-      vendor_customer_id,
+      customer_id,
       account_id,
+      to_account_id,
       status = 'COMPLETED',
       tax_amount,
       attachments
@@ -267,6 +369,9 @@ export async function createTransaction(req, res, next) {
     // Auto-generate transaction number
     const transactionNumber = generateTransactionNumber();
 
+    // For TRANSFER type, status should be PENDING initially
+    const finalStatus = transaction_type === 'TRANSFER' ? 'PENDING' : status;
+
     const insertRes = await query(
       `
       INSERT INTO transactions (
@@ -279,8 +384,9 @@ export async function createTransaction(req, res, next) {
         payment_method,
         reference_number,
         description,
-        vendor_customer_id,
+        customer_id,
         account_id,
+        to_account_id,
         status,
         tax_amount,
         attachments,
@@ -289,7 +395,7 @@ export async function createTransaction(req, res, next) {
         updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -303,19 +409,78 @@ export async function createTransaction(req, res, next) {
         payment_method || null,
         reference_number || null,
         description || null,
-        vendor_customer_id || null,
+        customer_id || null,
         account_id || null,
-        status,
+        to_account_id || null,
+        finalStatus,
         tax_amount || null,
         attachments ? JSON.stringify(attachments) : null,
         req.user?.user_id || null
       ]
     );
 
+    const transaction = insertRes.rows[0];
+
+    // If transaction type is TRANSFER, create transfer approval entry
+    if (transaction_type === 'TRANSFER') {
+      if (!account_id || !to_account_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'account_id and to_account_id are required for TRANSFER transactions'
+        });
+      }
+
+      try {
+        const approvalRes = await query(
+          `
+          INSERT INTO transfer_approvals (
+            transaction_id,
+            from_account_id,
+            to_account_id,
+            amount,
+            status,
+            requested_by,
+            comments,
+            requested_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+          RETURNING *
+          `,
+          [
+            transaction.id,
+            account_id,
+            to_account_id,
+            amount,
+            'PENDING',
+            req.user?.user_id || null,
+            description || null
+          ]
+        );
+
+        return res.status(201).json({
+          success: true,
+          message: 'Transfer transaction created successfully. Approval request created.',
+          data: {
+            transaction: transaction,
+            transfer_approval: approvalRes.rows[0]
+          }
+        });
+      } catch (approvalErr) {
+        // If approval creation fails, still return the transaction but log the error
+        console.error('Error creating transfer approval:', approvalErr);
+        return res.status(201).json({
+          success: true,
+          message: 'Transaction created successfully, but transfer approval creation failed',
+          data: transaction,
+          warning: 'Transfer approval could not be created'
+        });
+      }
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Transaction created successfully',
-      data: insertRes.rows[0]
+      data: transaction
     });
   } catch (err) {
     next(err);
@@ -335,8 +500,9 @@ export async function updateTransaction(req, res, next) {
       payment_method,
       reference_number,
       description,
-      vendor_customer_id,
+      customer_id,
       account_id,
+      to_account_id,
       status,
       tax_amount,
       attachments
@@ -354,13 +520,14 @@ export async function updateTransaction(req, res, next) {
         payment_method     = COALESCE($6, payment_method),
         reference_number   = COALESCE($7, reference_number),
         description        = COALESCE($8, description),
-        vendor_customer_id = COALESCE($9, vendor_customer_id),
+        customer_id        = COALESCE($9, customer_id),
         account_id         = COALESCE($10, account_id),
-        status             = COALESCE($11, status),
-        tax_amount         = COALESCE($12, tax_amount),
-        attachments        = COALESCE($13, attachments),
+        to_account_id      = COALESCE($11, to_account_id),
+        status             = COALESCE($12, status),
+        tax_amount         = COALESCE($13, tax_amount),
+        attachments        = COALESCE($14, attachments),
         updated_at         = NOW()
-      WHERE id = $14
+      WHERE id = $15
       RETURNING *
       `,
       [
@@ -372,8 +539,9 @@ export async function updateTransaction(req, res, next) {
         payment_method,
         reference_number,
         description,
-        vendor_customer_id,
+        customer_id,
         account_id,
+        to_account_id,
         status,
         tax_amount,
         attachments ? JSON.stringify(attachments) : null,
@@ -908,7 +1076,8 @@ export async function createFinanceAccount(req, res, next) {
       parent_account_id,
       opening_balance = 0,
       currency = 'INR',
-      is_active = true
+      is_active = true,
+      owner_user_id
     } = req.body;
 
     // Validate required fields
@@ -950,10 +1119,11 @@ export async function createFinanceAccount(req, res, next) {
         opening_balance,
         currency,
         is_active,
+        owner_user_id,
         created_at,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
       RETURNING *
       `,
       [
@@ -963,7 +1133,8 @@ export async function createFinanceAccount(req, res, next) {
         parent_account_id || null,
         opening_balance,
         currency,
-        is_active
+        is_active,
+        owner_user_id || null
       ]
     );
 
@@ -995,7 +1166,8 @@ export async function updateFinanceAccount(req, res, next) {
       parent_account_id,
       opening_balance,
       currency,
-      is_active
+      is_active,
+      owner_user_id
     } = req.body;
 
     // Validate account_type if provided
@@ -1020,8 +1192,9 @@ export async function updateFinanceAccount(req, res, next) {
         opening_balance   = COALESCE($5, opening_balance),
         currency          = COALESCE($6, currency),
         is_active         = COALESCE($7, is_active),
+        owner_user_id     = COALESCE($8, owner_user_id),
         updated_at        = NOW()
-      WHERE account_id = $8
+      WHERE account_id = $9
       RETURNING *
       `,
       [
@@ -1032,6 +1205,7 @@ export async function updateFinanceAccount(req, res, next) {
         opening_balance,
         currency,
         is_active,
+        owner_user_id,
         id
       ]
     );

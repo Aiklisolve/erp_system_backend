@@ -216,10 +216,22 @@ export async function getShiftById(req, res, next) {
       });
     }
 
+    const shift = shiftRes.rows[0];
+    
+    // Ensure erp_role and department are explicitly included in the response
+    // This helps frontend dropdowns to properly display selected values
+    // Preserve the actual values from database (including empty strings if any)
+    const responseData = {
+      ...shift,
+      // Explicitly include erp_role and department to ensure they're always present
+      erp_role: shift.erp_role !== undefined ? shift.erp_role : null,
+      department: shift.department !== undefined ? shift.department : null
+    };
+
     return res.json({
       success: true,
       data: {
-        shift: shiftRes.rows[0]
+        shift: responseData
       }
     });
   } catch (err) {
@@ -233,7 +245,7 @@ export async function createShift(req, res, next) {
     const body = req.body;
 
     // Validate required fields
-    if (!body.employee_name || !body.date || !body.start_time || !body.end_time || !body.role || !body.shift_type || !body.status) {
+    if (!body.employee_name || !body.date || !body.start_time || !body.end_time || !body.shift_type || !body.status) {
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -242,7 +254,6 @@ export async function createShift(req, res, next) {
           date: !body.date ? 'Date is required (YYYY-MM-DD format)' : undefined,
           start_time: !body.start_time ? 'Start time is required (HH:mm format)' : undefined,
           end_time: !body.end_time ? 'End time is required (HH:mm format)' : undefined,
-          role: !body.role ? 'Role is required' : undefined,
           shift_type: !body.shift_type ? 'Shift type is required' : undefined,
           status: !body.status ? 'Status is required' : undefined
         }
@@ -293,6 +304,9 @@ export async function createShift(req, res, next) {
     const normalizedStatus = body.status ? String(body.status).toUpperCase() : null;
     const normalizedShiftType = body.shift_type ? String(body.shift_type).toUpperCase() : null;
 
+    // Normalize erp_role to uppercase if provided (similar to department)
+    const normalizedErpRole = body.erp_role ? String(body.erp_role).toUpperCase().trim() : null;
+
     // Calculate total hours
     const totalHours = body.total_hours || calculateTotalHours(
       body.start_time,
@@ -330,10 +344,8 @@ export async function createShift(req, res, next) {
         end_time,
         break_duration_minutes,
         total_hours,
-        role,
         erp_role,
         department,
-        job_title,
         location,
         shift_type,
         status,
@@ -364,7 +376,7 @@ export async function createShift(req, res, next) {
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39
       )
       RETURNING *
       `,
@@ -379,10 +391,8 @@ export async function createShift(req, res, next) {
         body.end_time,
         body.break_duration_minutes || 0,
         totalHours,
-        body.role,
-        body.erp_role || null,
+        normalizedErpRole,
         normalizedDepartment,
-        body.job_title || null,
         body.location || null,
         normalizedShiftType,
         normalizedStatus,
@@ -448,8 +458,76 @@ export async function updateShift(req, res, next) {
 
     const existing = existingRes.rows[0];
 
+    // Validate required fields - use provided values or existing values
+    const employee_name = body.employee_name !== undefined ? body.employee_name : existing.employee_name;
+    const date = body.date !== undefined ? body.date : existing.date;
+    const start_time = body.start_time !== undefined ? body.start_time : existing.start_time;
+    const end_time = body.end_time !== undefined ? body.end_time : existing.end_time;
+    const shift_type = body.shift_type !== undefined ? body.shift_type : existing.shift_type;
+    const status = body.status !== undefined ? body.status : existing.status;
+
+    // Validate required fields
+    const errors = {};
+    if (!employee_name || employee_name.trim() === '') {
+      errors.employee_name = 'Employee name is required';
+    }
+    if (!date) {
+      errors.date = 'Date is required (YYYY-MM-DD format)';
+    }
+    if (!start_time) {
+      errors.start_time = 'Start time is required (HH:mm format)';
+    }
+    if (!end_time) {
+      errors.end_time = 'End time is required (HH:mm format)';
+    }
+    if (!shift_type) {
+      errors.shift_type = 'Shift type is required';
+    }
+    if (!status) {
+      errors.status = 'Status is required';
+    }
+
+    // If there are validation errors, return them
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error: Missing required fields',
+        errors: errors
+      });
+    }
+
+    // Normalize department, status, and shift_type to uppercase
+    // Normalize shift_type and status to uppercase
+    const normalizedShiftType = shift_type ? String(shift_type).toUpperCase() : null;
+    const normalizedStatus = status ? String(status).toUpperCase() : null;
+    
+    // Normalize erp_role to uppercase if provided (similar to department)
+    let normalizedErpRole = null;
+    if (body.erp_role !== undefined) {
+      if (body.erp_role === '' || body.erp_role === null) {
+        normalizedErpRole = null;
+      } else {
+        normalizedErpRole = String(body.erp_role).toUpperCase().trim();
+      }
+    }
+    
     // Normalize department, status, and shift_type to uppercase if provided
-    const normalizedBody = { ...body };
+    // Use validated values for required fields
+    const normalizedBody = { 
+      ...body,
+      employee_name: employee_name.trim(),
+      date,
+      start_time,
+      end_time,
+      shift_type: normalizedShiftType,
+      status: normalizedStatus
+    };
+    
+    // Explicitly handle erp_role if provided
+    if (body.erp_role !== undefined) {
+      normalizedBody.erp_role = normalizedErpRole;
+    }
+    
     if (body.department !== undefined) {
       // Map common variations to allowed values
       const departmentMapping = {
@@ -487,12 +565,6 @@ export async function updateShift(req, res, next) {
       
       normalizedBody.department = normalizedDept;
     }
-    if (body.status !== undefined) {
-      normalizedBody.status = String(body.status).toUpperCase();
-    }
-    if (body.shift_type !== undefined) {
-      normalizedBody.shift_type = String(body.shift_type).toUpperCase();
-    }
 
     // Build dynamic update query
     const updates = [];
@@ -503,7 +575,7 @@ export async function updateShift(req, res, next) {
     const fields = [
       'shift_number', 'employee_id', 'employee_name', 'employee_email',
       'date', 'start_time', 'end_time', 'break_duration_minutes',
-      'role', 'erp_role', 'department', 'job_title', 'location',
+      'erp_role', 'department', 'location',
       'shift_type', 'status', 'is_overtime', 'scheduled_by', 'approved_by',
       'approval_date', 'clock_in_time', 'clock_out_time',
       'task_completion_rate', 'performance_rating', 'quality_score',
@@ -513,6 +585,12 @@ export async function updateShift(req, res, next) {
 
     fields.forEach(field => {
       if (normalizedBody[field] !== undefined) {
+        // For erp_role and department, preserve existing value if empty string is sent
+        // This prevents accidentally clearing these fields when frontend sends empty values
+        if ((field === 'erp_role' || field === 'department') && normalizedBody[field] === '') {
+          // Skip updating - preserve existing value
+          return;
+        }
         updates.push(`${field} = $${idx}`);
         params.push(normalizedBody[field]);
         idx++;

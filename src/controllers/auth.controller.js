@@ -7,10 +7,33 @@ import {
 } from '../utils/jwt.js';
 import { v4 as uuidv4 } from 'uuid';
 import { sendOtp, verifyOtpCode } from '../services/otp.service.js';
+import { config } from '../config/env.js';
 
 const USER_TABLE = 'users';
 const SESSIONS_TABLE = 'user_sessions';
 const OTP_TABLE = 'otp_verifications';
+
+// Helper function to parse JWT expiration and return seconds
+function getExpiresInSeconds() {
+  const expiresIn = config.jwt.expiresIn || '3h';
+  const match = expiresIn.match(/^(\d+)([smhd])$/);
+  if (!match) return 3 * 3600; // Default to 3 hours if parsing fails
+  
+  const [, value, unit] = match;
+  const multipliers = { s: 1, m: 60, h: 3600, d: 86400 };
+  return parseInt(value) * multipliers[unit];
+}
+
+// Helper function to get expiration interval for SQL
+function getExpiresInInterval() {
+  const expiresIn = config.jwt.expiresIn || '3h';
+  const match = expiresIn.match(/^(\d+)([smhd])$/);
+  if (!match) return '3 hours';
+  
+  const [, value, unit] = match;
+  const unitMap = { s: 'seconds', m: 'minutes', h: 'hours', d: 'days' };
+  return `${value} ${unitMap[unit]}`;
+}
 
 // 1.1 Register User
 export async function register(req, res, next) {
@@ -278,11 +301,14 @@ export async function register(req, res, next) {
       user_id: user.id
     });
 
+    const expiresInInterval = getExpiresInInterval();
+    const expiresInSeconds = getExpiresInSeconds();
+
     const sessionResult = await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
       (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
-      VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
+      VALUES ($1, $2, $3, NOW() + interval '${expiresInInterval}', NOW(), $4, $5, true)
       RETURNING id
       `,
       [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
@@ -300,7 +326,7 @@ export async function register(req, res, next) {
         session_id: sessionId,
         token: accessToken,
         refresh_token: refreshToken,
-        expires_in: 3600
+        expires_in: expiresInSeconds
       }
     });
   } catch (err) {
@@ -389,11 +415,14 @@ export async function login(req, res, next) {
     });
     const refreshToken = signRefreshToken({ user_id: user.id });
 
+    const expiresInInterval = getExpiresInInterval();
+    const expiresInSeconds = getExpiresInSeconds();
+
     const sessionResult = await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
       (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
-      VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
+      VALUES ($1, $2, $3, NOW() + interval '${expiresInInterval}', NOW(), $4, $5, true)
       RETURNING id
       `,
       [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
@@ -411,7 +440,7 @@ export async function login(req, res, next) {
         session_id: sessionId,
         token: accessToken,
         refresh_token: refreshToken,
-        expires_in: 3600
+        expires_in: expiresInSeconds
       }
     });
   } catch (err) {
@@ -533,11 +562,14 @@ export async function verifyLoginOtp(req, res, next) {
     });
     const refreshToken = signRefreshToken({ user_id: user.id });
 
+    const expiresInInterval = getExpiresInInterval();
+    const expiresInSeconds = getExpiresInSeconds();
+
     const sessionResult = await query(
       `
       INSERT INTO ${SESSIONS_TABLE}
       (user_id, token, refresh_token, expires_at, created_at, ip_address, user_agent, is_active)
-      VALUES ($1, $2, $3, NOW() + interval '1 hour', NOW(), $4, $5, true)
+      VALUES ($1, $2, $3, NOW() + interval '${expiresInInterval}', NOW(), $4, $5, true)
       RETURNING id
       `,
       [user.id, accessToken, refreshToken, req.ip, req.headers['user-agent']]
@@ -553,7 +585,7 @@ export async function verifyLoginOtp(req, res, next) {
         session_id: sessionId,
         token: accessToken,
         refresh_token: refreshToken,
-        expires_in: 3600
+        expires_in: expiresInSeconds
       }
     });
   } catch (err) {
@@ -593,9 +625,11 @@ export async function refreshToken(req, res, next) {
       role: user.role
     });
 
+    const expiresInSeconds = getExpiresInSeconds();
+
     return res.json({
       success: true,
-      data: { token, expires_in: 3600 }
+      data: { token, expires_in: expiresInSeconds }
     });
   } catch (err) {
     next(err);
