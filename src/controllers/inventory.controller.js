@@ -1689,10 +1689,17 @@ export async function listPurchaseOrdersForAssignment(req, res, next) {
 
     const dataRes = await query(
       `
-      SELECT id, po_number, supplier_name, order_date, status, total_amount
-      FROM purchase_orders
-      WHERE status != 'CANCELLED'
-      ORDER BY created_at DESC
+      SELECT 
+        po.id,
+        po.po_number,
+        po.order_date,
+        po.status,
+        po.total_amount,
+        v.vendor_name as supplier_name
+      FROM purchase_orders po
+      LEFT JOIN vendors v ON po.supplier_id = v.id
+      WHERE po.status != 'CANCELLED'
+      ORDER BY po.created_at DESC
       LIMIT $1 OFFSET $2
       `,
       [limit, offset]
@@ -1701,8 +1708,8 @@ export async function listPurchaseOrdersForAssignment(req, res, next) {
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM purchase_orders
-      WHERE status != 'CANCELLED'
+      FROM purchase_orders po
+      WHERE po.status != 'CANCELLED'
       `
     );
 
