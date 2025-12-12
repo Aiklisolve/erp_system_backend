@@ -932,7 +932,7 @@ export async function createFinanceAccount(req, res, next) {
     }
 
     // Validate account_type
-    const validAccountTypes = ['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'EQUITY'];
+    const validAccountTypes = ['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'EQUITY', 'REVENUE', 'BANK_ACCOUNT', 'CASH_ACCOUNT', 'CREDIT_CARD'];
     if (!validAccountTypes.includes(account_type)) {
       return res.status(400).json({
         success: false,

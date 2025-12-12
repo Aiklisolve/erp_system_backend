@@ -159,3 +159,47 @@ export async function getProductionStatusPie(req, res) {
         return res.status(500).json({ success: false, message: "Server error" });
     }
 }
+//bar graph//
+export async function getLastFiveMonthsIncome(req, res) {
+  try {
+    const sql = `
+      SELECT 
+          to_char(transaction_date, 'YYYY-MM') AS month,
+          SUM(CASE WHEN transaction_type = 'INCOME' THEN amount ELSE 0 END) AS total_income,
+          SUM(CASE WHEN transaction_type = 'EXPENSE' THEN amount ELSE 0 END) AS total_expense,
+          SUM(CASE WHEN transaction_type = 'INCOME' THEN amount ELSE 0 END)
+            - SUM(CASE WHEN transaction_type = 'EXPENSE' THEN amount ELSE 0 END) AS profit
+      FROM transactions
+      WHERE transaction_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+      GROUP BY month
+      ORDER BY month;
+    `;
+
+    const result = await query(sql);
+
+    // Format numbers
+    const formatted = result.rows.map(row => ({
+      month: row.month,
+      income: Number(row.total_income),
+      expense: Number(row.total_expense),
+      profit: Number(row.profit)
+    }));
+
+    // Find highest profit month
+    const highestProfit = formatted.reduce((max, m) =>
+      m.profit > max.profit ? m : max,
+      formatted[0] || { profit: 0 }
+    );
+
+    return res.json({
+      success: true,
+      highestProfitMonth: highestProfit.month,
+      highestProfitValue: highestProfit.profit,
+      data: formatted
+    });
+
+  } catch (err) {
+    console.error("Error in getLastFiveMonthsIncome:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
