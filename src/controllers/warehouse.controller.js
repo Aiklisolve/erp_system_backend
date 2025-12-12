@@ -30,7 +30,7 @@ export async function listWarehouses(req, res, next) {
 
     if (search) {
       conditions.push(
-        `(warehouse_code ILIKE $${idx} OR warehouse_name ILIKE $${idx} OR address_line1 ILIKE $${idx})`
+        `(warehouse_code ILIKE $${idx} OR name ILIKE $${idx} OR address ILIKE $${idx})`
       );
       params.push(`%${search}%`);
       idx++;
@@ -107,30 +107,110 @@ export async function createWarehouse(req, res, next) {
   try {
     const body = req.body;
 
+    // Auto-generate warehouse_code if not provided
+    let warehouseCode = body.warehouse_code;
+    if (!warehouseCode) {
+      // Get existing warehouse codes to determine format
+      const existingCodes = await query(
+        `
+        SELECT warehouse_code
+        FROM warehouses
+        WHERE warehouse_code IS NOT NULL
+        ORDER BY warehouse_code DESC
+        LIMIT 10
+        `
+      );
+
+      // Determine format from existing codes
+      let format = 'WH-001'; // Default format
+      let maxNum = 0;
+
+      if (existingCodes.rows.length > 0) {
+        // Try to extract pattern from existing codes
+        const codes = existingCodes.rows.map(row => row.warehouse_code).filter(Boolean);
+        
+        // Check for patterns like WH-001, WH-002, etc.
+        const pattern = /^WH-(\d+)$/i;
+        for (const code of codes) {
+          const match = code.match(pattern);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) {
+              maxNum = num;
+            }
+          }
+        }
+
+        // If no pattern found, check for other patterns like WH001, W001, etc.
+        if (maxNum === 0) {
+          const pattern2 = /^WH(\d+)$/i;
+          for (const code of codes) {
+            const match = code.match(pattern2);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (num > maxNum) {
+                maxNum = num;
+              }
+            }
+          }
+        }
+
+        // Generate next code
+        maxNum++;
+        warehouseCode = `WH-${String(maxNum).padStart(3, '0')}`;
+      } else {
+        warehouseCode = 'WH-001';
+      }
+
+      // Ensure uniqueness (in case of race condition)
+      let attempts = 0;
+      while (attempts < 10) {
+        const checkRes = await query(
+          `SELECT id FROM warehouses WHERE warehouse_code = $1`,
+          [warehouseCode]
+        );
+        
+        if (checkRes.rowCount === 0) {
+          break; // Code is unique
+        }
+        
+        // Code exists, increment and try again
+        maxNum++;
+        warehouseCode = `WH-${String(maxNum).padStart(3, '0')}`;
+        attempts++;
+      }
+    }
+
     const insertRes = await query(
       `
       INSERT INTO warehouses (
         warehouse_code,
-        warehouse_name,
-        address_line1,
+        name,
+        address,
         city,
         state,
         pincode,
+        country,
+        manager_id,
+        capacity,
         is_active,
         created_at
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,COALESCE($7,true),NOW()
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10,true),NOW()
       )
       RETURNING *
       `,
       [
-        body.warehouse_code,
-        body.warehouse_name,
-        body.address_line1,
+        warehouseCode,
+        body.warehouse_name || body.name,
+        body.address_line1 || body.address,
         body.city,
         body.state,
         body.pincode,
+        body.country || null,
+        body.manager_id || null,
+        body.capacity || null,
         body.is_active
       ]
     );
@@ -156,23 +236,29 @@ export async function updateWarehouse(req, res, next) {
       UPDATE warehouses
       SET
         warehouse_code  = COALESCE($1, warehouse_code),
-        warehouse_name  = COALESCE($2, warehouse_name),
-        address_line1   = COALESCE($3, address_line1),
+        name            = COALESCE($2, name),
+        address         = COALESCE($3, address),
         city            = COALESCE($4, city),
         state           = COALESCE($5, state),
         pincode         = COALESCE($6, pincode),
-        is_active       = COALESCE($7, is_active),
+        country         = COALESCE($7, country),
+        manager_id      = COALESCE($8, manager_id),
+        capacity        = COALESCE($9, capacity),
+        is_active       = COALESCE($10, is_active),
         updated_at      = NOW()
-      WHERE id = $8
+      WHERE id = $11
       RETURNING *
       `,
       [
         body.warehouse_code,
-        body.warehouse_name,
-        body.address_line1,
+        body.warehouse_name || body.name,
+        body.address_line1 || body.address,
         body.city,
         body.state,
         body.pincode,
+        body.country,
+        body.manager_id,
+        body.capacity,
         body.is_active,
         id
       ]
