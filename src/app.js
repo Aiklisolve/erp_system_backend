@@ -29,7 +29,7 @@ import supplyChainRoutes from './routes/supplyChain.routes.js';
 import erpUsersRoutes from './routes/erp-users.routes.js';
 
 // If/when you create these files, uncomment the imports + app.use below
-// import hrRoutes from './routes/hr.routes.js';
+import hrRoutes from './routes/hr.routes.js';
 import tasksRoutes from './routes/tasks.routes.js';
 
 const app = express();
@@ -48,7 +48,7 @@ app.use(`${base}/sessions`, sessionRoutes);
 app.use(`${base}/crm`, crmRoutes);
 
 // Later, when you have HR/Tasks route files ready:
-// app.use(`${base}/hr`, hrRoutes);
+app.use(`${base}/hr`, hrRoutes);
 app.use(`${base}/tasks`, tasksRoutes);
 
 // Finance, inventory, etc.
