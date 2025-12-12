@@ -24,6 +24,7 @@ import productsRoutes from './routes/products.routes.js';
 import customersRoutes from './routes/customers.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
+import invoicesRoutes from './routes/invoices.routes.js';
 
 // If/when you create these files, uncomment the imports + app.use below
 // import hrRoutes from './routes/hr.routes.js';
@@ -61,6 +62,7 @@ app.use(`${base}`, productsRoutes);
 app.use(`${base}/customers`, customersRoutes);
 app.use(`${base}/dashboard`, dashboardRoutes);
 app.use(`${base}/reports`, reportsRoutes);
+app.use(`${base}/invoices`, invoicesRoutes);
 
 // Optional: a simple health check
 app.get('/health', (req, res) => {

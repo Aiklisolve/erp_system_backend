@@ -1390,144 +1390,104 @@ export async function downloadInvoicePDF(req, res, next) {
     // Pipe PDF to response
     doc.pipe(res);
 
-    // Header Section
-    doc.fontSize(24).font('Helvetica-Bold').text('INVOICE', { align: 'center' });
-    doc.moveDown(0.5);
+    const leftMargin = 50;
+    const rightMargin = 545;
+    const pageWidth = rightMargin - leftMargin;
+    const centerX = leftMargin + pageWidth / 2;
+
+    // Header Section with background
+    doc.rect(leftMargin, 50, pageWidth, 50)
+       .fillColor('#2c3e50')
+       .fill()
+       .fillColor('white');
+    
+    doc.fontSize(28).font('Helvetica-Bold')
+       .fillColor('white')
+       .text('INVOICE', centerX, 65, { align: 'center', width: pageWidth });
+    
     const invoiceNumberText = invoice.invoice_number || invoice.invoice_code || 'N/A';
     const invoiceCodeText = invoice.invoice_code && invoice.invoice_code !== invoice.invoice_number 
       ? ` (${invoice.invoice_code})` 
       : '';
-    doc.fontSize(10).font('Helvetica').text(`Invoice #: ${invoiceNumberText}${invoiceCodeText}`, { align: 'center' });
-    if (invoice.currency && invoice.currency !== 'INR') {
-      doc.fontSize(9).font('Helvetica').text(`Currency: ${invoice.currency}`, { align: 'center' });
-    }
-    doc.moveDown(1);
+    doc.fontSize(11).font('Helvetica')
+       .text(`Invoice #: ${invoiceNumberText}${invoiceCodeText}`, centerX, 85, { align: 'center', width: pageWidth });
+    
+    doc.fillColor('black'); // Reset fill color
 
-    // Invoice Details Section (Left side)
-    const leftMargin = 50;
-    const rightMargin = 300;
-    let yPosition = 120;
+    // Start content below header
+    let yPosition = 110;
 
-    doc.fontSize(10).font('Helvetica-Bold').text('Invoice Details:', leftMargin, yPosition);
-    yPosition += 15;
+    // Two-column layout: Invoice Details (Left) and Bill To (Right)
+    const leftColX = leftMargin;
+    const rightColX = leftMargin + pageWidth / 2 + 20;
+    const colWidth = (pageWidth / 2) - 30;
+    let leftY = yPosition;
+    let rightY = yPosition;
+
+    // Invoice Details Box (Left Column)
+    doc.rect(leftColX, leftY, colWidth, 140)
+       .fillColor('#f8f9fa')
+       .fill()
+       .strokeColor('#dee2e6')
+       .stroke()
+       .fillColor('black');
+    
+    leftY += 10;
+    doc.fontSize(11).font('Helvetica-Bold').text('Invoice Details', leftColX + 10, leftY);
+    leftY += 18;
     doc.font('Helvetica').fontSize(9);
-    doc.text(`Invoice Date: ${invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString() : 'N/A'}`, leftMargin, yPosition);
-    yPosition += 12;
-    doc.text(`Due Date: ${invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : 'N/A'}`, leftMargin, yPosition);
-    yPosition += 12;
+    
+    const invoiceDetails = [];
+    if (invoice.invoice_date) {
+      invoiceDetails.push({ label: 'Invoice Date:', value: new Date(invoice.invoice_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) });
+    }
+    if (invoice.due_date) {
+      invoiceDetails.push({ label: 'Due Date:', value: new Date(invoice.due_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) });
+    }
     if (invoice.status) {
-      doc.text(`Status: ${invoice.status}`, leftMargin, yPosition);
-      yPosition += 12;
+      invoiceDetails.push({ label: 'Status:', value: invoice.status });
     }
     if (invoice.invoice_type) {
-      doc.text(`Type: ${invoice.invoice_type}`, leftMargin, yPosition);
-      yPosition += 12;
+      invoiceDetails.push({ label: 'Type:', value: invoice.invoice_type });
     }
     if (invoice.po_number) {
-      doc.text(`PO Number: ${invoice.po_number}`, leftMargin, yPosition);
-      yPosition += 12;
+      invoiceDetails.push({ label: 'PO Number:', value: invoice.po_number });
     }
     if (invoice.reference_number) {
-      doc.text(`Reference: ${invoice.reference_number}`, leftMargin, yPosition);
-      yPosition += 12;
+      invoiceDetails.push({ label: 'Reference:', value: invoice.reference_number });
     }
     if (invoice.order_id) {
-      doc.text(`Order ID: ${invoice.order_id}`, leftMargin, yPosition);
-      yPosition += 12;
+      invoiceDetails.push({ label: 'Order ID:', value: String(invoice.order_id) });
     }
     if (invoice.project_name) {
-      doc.text(`Project: ${invoice.project_name}`, leftMargin, yPosition);
-      yPosition += 12;
+      invoiceDetails.push({ label: 'Project:', value: invoice.project_name });
     }
-    if (invoice.paid_date) {
-      doc.text(`Paid Date: ${new Date(invoice.paid_date).toLocaleDateString()}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    if (invoice.payment_method) {
-      doc.text(`Payment Method: ${invoice.payment_method}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    if (invoice.payment_reference) {
-      doc.text(`Payment Ref: ${invoice.payment_reference}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    if (invoice.is_recurring) {
-      doc.text(`Recurring: Yes`, leftMargin, yPosition);
-      yPosition += 12;
-      if (invoice.recurring_frequency) {
-        doc.text(`Frequency: ${invoice.recurring_frequency}`, leftMargin, yPosition);
-        yPosition += 12;
-      }
-      if (invoice.recurring_end_date) {
-        doc.text(`End Date: ${new Date(invoice.recurring_end_date).toLocaleDateString()}`, leftMargin, yPosition);
-        yPosition += 12;
-      }
-    }
+    
+    invoiceDetails.forEach(detail => {
+      doc.font('Helvetica-Bold').text(detail.label, leftColX + 10, leftY);
+      doc.font('Helvetica').text(detail.value, leftColX + 80, leftY);
+      leftY += 12;
+    });
 
-    // Amount Details Section
-    yPosition += 5;
-    doc.moveTo(leftMargin, yPosition).lineTo(leftMargin + 200, yPosition).stroke();
-    yPosition += 10;
-    doc.fontSize(9).font('Helvetica-Bold').text('Amount Details:', leftMargin, yPosition);
-    yPosition += 15;
+    // Bill To Box (Right Column)
+    doc.rect(rightColX, rightY, colWidth, 140)
+       .fillColor('#f8f9fa')
+       .fill()
+       .strokeColor('#dee2e6')
+       .stroke()
+       .fillColor('black');
+    
+    rightY += 10;
+    doc.fontSize(11).font('Helvetica-Bold').text('Bill To', rightColX + 10, rightY);
+    rightY += 18;
     doc.font('Helvetica').fontSize(9);
     
-    doc.text(`Subtotal: ${formatCurrency(parseFloat(invoice.subtotal) || 0)}`, leftMargin, yPosition);
-    yPosition += 12;
-    
-    if (parseFloat(invoice.discount_amount) > 0) {
-      doc.text(`Discount: ${formatCurrency(parseFloat(invoice.discount_amount) || 0)}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    
-    if (parseFloat(invoice.tax_amount) > 0) {
-      doc.text(`Tax: ${formatCurrency(parseFloat(invoice.tax_amount) || 0)}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    
-    if (parseFloat(invoice.shipping_amount) > 0) {
-      doc.text(`Shipping: ${formatCurrency(parseFloat(invoice.shipping_amount) || 0)}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    
-    doc.font('Helvetica-Bold');
-    doc.text(`Total Amount: ${formatCurrency(parseFloat(invoice.total_amount) || 0)}`, leftMargin, yPosition);
-    yPosition += 12;
-    
-    if (parseFloat(invoice.paid_amount) > 0) {
-      doc.font('Helvetica');
-      doc.text(`Paid Amount: ${formatCurrency(parseFloat(invoice.paid_amount) || 0)}`, leftMargin, yPosition);
-      yPosition += 12;
-      doc.text(`Balance Due: ${formatCurrency(parseFloat(invoice.balance_amount) || 0)}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-    
-    // Items Summary
-    if (items.length > 0) {
-      yPosition += 5;
-      doc.moveTo(leftMargin, yPosition).lineTo(leftMargin + 200, yPosition).stroke();
-      yPosition += 10;
-      doc.fontSize(9).font('Helvetica-Bold').text('Items Summary:', leftMargin, yPosition);
-      yPosition += 15;
-      doc.font('Helvetica').fontSize(8);
-      doc.text(`Total Items: ${items.length}`, leftMargin, yPosition);
-      yPosition += 12;
-      const totalQuantity = items.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
-      doc.text(`Total Quantity: ${totalQuantity.toFixed(2)}`, leftMargin, yPosition);
-      yPosition += 12;
-    }
-
-    // Customer Information Section (Right side)
-    yPosition = 120;
-    doc.fontSize(10).font('Helvetica-Bold').text('Bill To:', rightMargin, yPosition);
-    yPosition += 15;
-    doc.font('Helvetica').fontSize(9);
-    doc.text(customerName, rightMargin, yPosition);
-    yPosition += 12;
+    doc.text(customerName, rightColX + 10, rightY);
+    rightY += 12;
     
     if (customerAddress) {
-      doc.text(customerAddress, rightMargin, yPosition);
-      yPosition += 12;
+      doc.text(customerAddress, rightColX + 10, rightY, { width: colWidth - 20 });
+      rightY += doc.heightOfString(customerAddress, { width: colWidth - 20 }) + 2;
     }
     
     const addressParts = [];
@@ -1535,138 +1495,231 @@ export async function downloadInvoicePDF(req, res, next) {
     if (customerState) addressParts.push(customerState);
     if (customerPincode) addressParts.push(customerPincode);
     if (addressParts.length > 0) {
-      doc.text(addressParts.join(', '), rightMargin, yPosition);
-      yPosition += 12;
+      doc.text(addressParts.join(', '), rightColX + 10, rightY);
+      rightY += 12;
     }
     
     if (customerCountry) {
-      doc.text(customerCountry, rightMargin, yPosition);
-      yPosition += 12;
+      doc.text(customerCountry, rightColX + 10, rightY);
+      rightY += 12;
     }
     
     if (customerEmail) {
-      doc.text(`Email: ${customerEmail}`, rightMargin, yPosition);
-      yPosition += 12;
+      doc.text(`Email: ${customerEmail}`, rightColX + 10, rightY);
+      rightY += 12;
     }
     
     if (customerPhone) {
-      doc.text(`Phone: ${customerPhone}`, rightMargin, yPosition);
-      yPosition += 12;
+      doc.text(`Phone: ${customerPhone}`, rightColX + 10, rightY);
+      rightY += 12;
     }
     
     if (customerGstin) {
-      doc.text(`GSTIN: ${customerGstin}`, rightMargin, yPosition);
-      yPosition += 12;
+      doc.text(`GSTIN: ${customerGstin}`, rightColX + 10, rightY);
+      rightY += 12;
     }
+    
+    // Move to items table section
+    yPosition = Math.max(leftY, rightY) + 20;
 
     // Items Table Section
-    yPosition = Math.max(yPosition, 250);
-    doc.moveTo(50, yPosition).lineTo(545, yPosition).stroke();
+    doc.moveTo(leftMargin, yPosition).lineTo(rightMargin, yPosition).stroke();
     yPosition += 10;
 
-    // Table Headers
+    // Table Header Background
+    doc.rect(leftMargin, yPosition, pageWidth, 20)
+       .fillColor('#e9ecef')
+       .fill()
+       .fillColor('black');
+    
+    yPosition += 5;
+    
+    // Table Headers with proper column widths
     doc.fontSize(9).font('Helvetica-Bold');
-    doc.text('Item', 50, yPosition);
-    doc.text('Qty', 250, yPosition);
-    doc.text('Unit Price', 290, yPosition);
-    doc.text('Tax %', 360, yPosition);
-    doc.text('Total', 420, yPosition);
+    const colWidths = {
+      item: 200,
+      qty: 50,
+      unitPrice: 90,
+      tax: 60,
+      total: 90
+    };
+    
+    let colX = leftMargin + 5;
+    doc.text('Item', colX, yPosition, { width: colWidths.item - 10 });
+    colX += colWidths.item;
+    doc.text('Qty', colX, yPosition, { width: colWidths.qty - 5, align: 'center' });
+    colX += colWidths.qty;
+    doc.text('Unit Price', colX, yPosition, { width: colWidths.unitPrice - 5, align: 'right' });
+    colX += colWidths.unitPrice;
+    doc.text('Tax %', colX, yPosition, { width: colWidths.tax - 5, align: 'center' });
+    colX += colWidths.tax;
+    doc.text('Total', colX, yPosition, { width: colWidths.total - 5, align: 'right' });
+    
     yPosition += 15;
-
-    doc.moveTo(50, yPosition).lineTo(545, yPosition).stroke();
+    doc.moveTo(leftMargin, yPosition).lineTo(rightMargin, yPosition).stroke();
     yPosition += 10;
 
     // Table Rows
     doc.font('Helvetica').fontSize(8);
+    const rowSpacing = 3;
+    const baseRowHeight = 18;
     
     if (items.length === 0) {
       // Show message if no items
-      doc.text('No items found', 50, yPosition);
+      doc.text('No items found', leftMargin + 10, yPosition);
       yPosition += 20;
     } else {
       items.forEach((item, index) => {
-        if (yPosition > 700) {
+        if (yPosition + baseRowHeight > 650) {
           // New page if needed
           doc.addPage();
           yPosition = 50;
+          
+          // Redraw table header on new page
+          doc.rect(leftMargin, yPosition, pageWidth, 20)
+             .fillColor('#e9ecef')
+             .fill()
+             .fillColor('black');
+          
+          yPosition += 5;
+          colX = leftMargin + 5;
+          doc.fontSize(9).font('Helvetica-Bold');
+          doc.text('Item', colX, yPosition, { width: colWidths.item - 10 });
+          colX += colWidths.item;
+          doc.text('Qty', colX, yPosition, { width: colWidths.qty - 5, align: 'center' });
+          colX += colWidths.qty;
+          doc.text('Unit Price', colX, yPosition, { width: colWidths.unitPrice - 5, align: 'right' });
+          colX += colWidths.unitPrice;
+          doc.text('Tax %', colX, yPosition, { width: colWidths.tax - 5, align: 'center' });
+          colX += colWidths.tax;
+          doc.text('Total', colX, yPosition, { width: colWidths.total - 5, align: 'right' });
+          
+          yPosition += 15;
+          doc.moveTo(leftMargin, yPosition).lineTo(rightMargin, yPosition).stroke();
+          yPosition += 10;
+          doc.font('Helvetica').fontSize(8);
+        }
+
+        // Alternate row background
+        if (index % 2 === 0) {
+          doc.rect(leftMargin, yPosition - 2, pageWidth, baseRowHeight + 2)
+             .fillColor('#fafafa')
+             .fill()
+             .fillColor('black');
         }
 
         // Item name and description
         const itemName = item.item_name || 'Item';
         const itemText = item.description 
-          ? `${itemName}\n${item.description}`
+          ? `${itemName} - ${item.description}`
           : itemName;
         
         // Calculate height needed for item text
-        const itemTextHeight = doc.heightOfString(itemText, { width: 190, lineGap: 2 });
+        const itemTextHeight = doc.heightOfString(itemText, { width: colWidths.item - 10, lineGap: 1 });
+        const rowHeight = Math.max(itemTextHeight + 4, baseRowHeight);
         
-        // Draw item name/description (left column)
-        doc.text(itemText, 50, yPosition, { width: 190, lineGap: 2 });
+        // Draw item name/description
+        colX = leftMargin + 5;
+        doc.text(itemText, colX, yPosition + 2, { width: colWidths.item - 10, lineGap: 1 });
         
-        // Draw quantity (aligned with top of item text)
-        doc.text(String(item.quantity || 0), 250, yPosition);
+        // Draw quantity (center aligned)
+        colX += colWidths.item;
+        doc.text(String(item.quantity || 0), colX, yPosition + 2, { width: colWidths.qty - 5, align: 'center' });
         
-        // Draw unit price
-        doc.text(formatCurrency(item.unit_price || 0), 290, yPosition);
+        // Draw unit price (right aligned)
+        colX += colWidths.qty;
+        doc.text(formatCurrency(item.unit_price || 0), colX, yPosition + 2, { width: colWidths.unitPrice - 5, align: 'right' });
         
-        // Draw tax rate
-        doc.text(`${item.tax_rate || 0}%`, 360, yPosition);
+        // Draw tax rate (center aligned)
+        colX += colWidths.unitPrice;
+        doc.text(`${item.tax_rate || 0}%`, colX, yPosition + 2, { width: colWidths.tax - 5, align: 'center' });
         
-        // Draw total
-        doc.text(formatCurrency(item.total_amount || 0), 420, yPosition);
+        // Draw total (right aligned)
+        colX += colWidths.tax;
+        doc.text(formatCurrency(item.total_amount || 0), colX, yPosition + 2, { width: colWidths.total - 5, align: 'right' });
         
-        // Move to next row - use the height of the item text or minimum 20
-        yPosition += Math.max(itemTextHeight + 5, 20);
+        // Move to next row
+        yPosition += rowHeight + rowSpacing;
       });
     }
 
-    // Summary Section
+    // Summary Section (Right-aligned box)
+    yPosition += 15;
+    doc.moveTo(leftMargin, yPosition).lineTo(rightMargin, yPosition).stroke();
     yPosition += 10;
-    doc.moveTo(50, yPosition).lineTo(545, yPosition).stroke();
-    yPosition += 15;
 
-    const summaryX = 350;
-    doc.fontSize(9);
-    doc.text('Subtotal:', summaryX, yPosition);
-    doc.text(formatCurrency(parseFloat(invoice.subtotal) || 0), 450, yPosition, { align: 'right' });
-    yPosition += 15;
+    const summaryBoxWidth = 200;
+    const summaryBoxX = rightMargin - summaryBoxWidth;
+    const summaryLabelWidth = 100;
+    const summaryValueWidth = 90;
+    const summaryValueX = summaryBoxX + summaryLabelWidth;
+
+    // Summary box background
+    doc.rect(summaryBoxX, yPosition, summaryBoxWidth, 120)
+       .fillColor('#f8f9fa')
+       .fill()
+       .strokeColor('#dee2e6')
+       .stroke()
+       .fillColor('black');
+    
+    yPosition += 10;
+    doc.fontSize(10).font('Helvetica-Bold').text('Summary of Charges', summaryBoxX + 10, yPosition);
+    yPosition += 18;
+    
+    doc.fontSize(9).font('Helvetica');
+    doc.text('Subtotal:', summaryBoxX + 10, yPosition);
+    doc.text(formatCurrency(parseFloat(invoice.subtotal) || 0), summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+    yPosition += 14;
 
     if (parseFloat(invoice.discount_amount) > 0) {
-      doc.text('Discount:', summaryX, yPosition);
-      doc.text(`-${formatCurrency(parseFloat(invoice.discount_amount) || 0)}`, 450, yPosition, { align: 'right' });
-      yPosition += 15;
+      doc.text('Discount:', summaryBoxX + 10, yPosition);
+      doc.text(`-${formatCurrency(parseFloat(invoice.discount_amount) || 0)}`, summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+      yPosition += 14;
     }
 
     if (parseFloat(invoice.tax_amount) > 0) {
-      doc.text('Tax:', summaryX, yPosition);
-      doc.text(formatCurrency(parseFloat(invoice.tax_amount) || 0), 450, yPosition, { align: 'right' });
-      yPosition += 15;
+      doc.text('Tax:', summaryBoxX + 10, yPosition);
+      doc.text(formatCurrency(parseFloat(invoice.tax_amount) || 0), summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+      yPosition += 14;
     }
 
     if (parseFloat(invoice.shipping_amount) > 0) {
-      doc.text('Shipping:', summaryX, yPosition);
-      doc.text(formatCurrency(parseFloat(invoice.shipping_amount) || 0), 450, yPosition, { align: 'right' });
-      yPosition += 15;
+      doc.text('Shipping:', summaryBoxX + 10, yPosition);
+      doc.text(formatCurrency(parseFloat(invoice.shipping_amount) || 0), summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+      yPosition += 14;
     }
 
     yPosition += 5;
-    doc.moveTo(summaryX, yPosition).lineTo(545, yPosition).stroke();
+    doc.moveTo(summaryBoxX + 10, yPosition).lineTo(summaryBoxX + summaryBoxWidth - 10, yPosition).stroke();
     yPosition += 10;
 
     doc.fontSize(11).font('Helvetica-Bold');
-    doc.text('Total Amount:', summaryX, yPosition);
-    doc.text(formatCurrency(parseFloat(invoice.total_amount) || 0), 450, yPosition, { align: 'right' });
-    yPosition += 15;
+    doc.text('Total Amount:', summaryBoxX + 10, yPosition);
+    doc.text(formatCurrency(parseFloat(invoice.total_amount) || 0), summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+    yPosition += 16;
 
     if (parseFloat(invoice.paid_amount) > 0) {
       doc.fontSize(9).font('Helvetica');
-      doc.text('Paid Amount:', summaryX, yPosition);
-      doc.text(formatCurrency(parseFloat(invoice.paid_amount) || 0), 450, yPosition, { align: 'right' });
-      yPosition += 15;
+      doc.text('Paid Amount:', summaryBoxX + 10, yPosition);
+      doc.text(formatCurrency(parseFloat(invoice.paid_amount) || 0), summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+      yPosition += 14;
       
-      doc.text('Balance Due:', summaryX, yPosition);
-      doc.text(formatCurrency(parseFloat(invoice.balance_amount) || 0), 450, yPosition, { align: 'right' });
-      yPosition += 15;
+      doc.text('Balance Due:', summaryBoxX + 10, yPosition);
+      doc.text(formatCurrency(parseFloat(invoice.balance_amount) || 0), summaryValueX, yPosition, { width: summaryValueWidth, align: 'right' });
+      yPosition += 14;
+    }
+    
+    // Items Summary (Left side of summary section)
+    if (items.length > 0) {
+      const itemsSummaryX = leftMargin;
+      const itemsSummaryY = yPosition - 100; // Align with summary box top
+      
+      doc.fontSize(9).font('Helvetica-Bold').text('Items Summary', itemsSummaryX, itemsSummaryY);
+      const itemsSummaryY2 = itemsSummaryY + 18;
+      doc.font('Helvetica').fontSize(8);
+      doc.text(`Total Items: ${items.length}`, itemsSummaryX, itemsSummaryY2);
+      const totalQuantity = items.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
+      doc.text(`Total Quantity: ${totalQuantity.toFixed(2)}`, itemsSummaryX, itemsSummaryY2 + 12);
     }
 
     // Notes and Terms Section
@@ -1677,29 +1730,41 @@ export async function downloadInvoicePDF(req, res, next) {
         yPosition = 50;
       }
 
-      doc.fontSize(10).font('Helvetica-Bold').text('Notes & Terms:', 50, yPosition);
-      yPosition += 15;
+      // Notes box
+      const notesBoxHeight = 100;
+      doc.rect(leftMargin, yPosition, pageWidth, notesBoxHeight)
+         .fillColor('#f8f9fa')
+         .fill()
+         .strokeColor('#dee2e6')
+         .stroke()
+         .fillColor('black');
+      
+      yPosition += 10;
+      doc.fontSize(10).font('Helvetica-Bold').text('Notes & Terms', leftMargin + 10, yPosition);
+      yPosition += 18;
       doc.fontSize(9).font('Helvetica');
       
+      let notesY = yPosition;
+      
       if (invoice.notes) {
-        doc.text('Notes:', 50, yPosition);
-        yPosition += 12;
-        doc.text(invoice.notes, 50, yPosition, { width: 495, lineGap: 3 });
-        yPosition += doc.heightOfString(invoice.notes, { width: 495 }) + 10;
+        doc.font('Helvetica-Bold').text('Notes:', leftMargin + 10, notesY);
+        notesY += 12;
+        doc.font('Helvetica').text(invoice.notes, leftMargin + 10, notesY, { width: pageWidth - 20, lineGap: 3 });
+        notesY += doc.heightOfString(invoice.notes, { width: pageWidth - 20 }) + 8;
       }
       
       if (invoice.payment_notes) {
-        doc.text('Payment Notes:', 50, yPosition);
-        yPosition += 12;
-        doc.text(invoice.payment_notes, 50, yPosition, { width: 495, lineGap: 3 });
-        yPosition += doc.heightOfString(invoice.payment_notes, { width: 495 }) + 10;
+        doc.font('Helvetica-Bold').text('Payment Notes:', leftMargin + 10, notesY);
+        notesY += 12;
+        doc.font('Helvetica').text(invoice.payment_notes, leftMargin + 10, notesY, { width: pageWidth - 20, lineGap: 3 });
+        notesY += doc.heightOfString(invoice.payment_notes, { width: pageWidth - 20 }) + 8;
       }
       
       if (invoice.payment_terms || invoice.terms_conditions || invoice.terms) {
         const terms = invoice.payment_terms || invoice.terms_conditions || invoice.terms;
-        doc.text('Payment Terms:', 50, yPosition);
-        yPosition += 12;
-        doc.text(terms, 50, yPosition, { width: 495, lineGap: 3 });
+        doc.font('Helvetica-Bold').text('Payment Terms:', leftMargin + 10, notesY);
+        notesY += 12;
+        doc.font('Helvetica').text(terms, leftMargin + 10, notesY, { width: pageWidth - 20, lineGap: 3 });
       }
     }
 

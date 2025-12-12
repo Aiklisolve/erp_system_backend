@@ -4,8 +4,7 @@ import { getPagination, buildPaginationMeta } from '../utils/pagination.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const PDFDocument = require('pdfkit');
-// TODO: Install exceljs for proper Excel file generation: npm install exceljs
-// import ExcelJS from 'exceljs';
+const ExcelJS = require('exceljs');
 
 const REPORTS_TABLE = 'reports';
 const EMPLOYEES_TABLE = 'employees';
@@ -60,7 +59,7 @@ function generateFileUrl(reportCode, format) {
   let extension;
   switch (format.toUpperCase()) {
     case 'EXCEL':
-      extension = 'csv'; // Using .csv for now (Excel can open CSV files)
+      extension = 'xlsx'; // Now generating proper XLSX files with exceljs
       break;
     case 'PDF':
       extension = 'pdf'; // Now generating actual PDF files
@@ -83,7 +82,7 @@ function generateFileUrl(reportCode, format) {
 function getFileExtension(format) {
   switch (format.toUpperCase()) {
     case 'EXCEL':
-      return 'csv'; // Using .csv for now (Excel can open CSV files natively)
+      return 'xlsx'; // Now generating proper XLSX files with exceljs
     case 'PDF':
       return 'pdf'; // Now generating actual PDF files with pdfkit
     case 'CSV':
@@ -268,11 +267,11 @@ async function fetchEmployeeData(filters, startDate, endDate) {
       e.phone as "Phone",
       e.department as "Department",
       e.position as "Position",
-      e.hire_date as "Hire Date",
-      e.salary as "Salary",
+      TO_CHAR(e.hire_date, 'DD Mon YYYY') as "Hire Date",
+      COALESCE(e.salary::text, '') as "Salary",
       e.status as "Status",
-      e.city as "City",
-      e.state as "State"
+      COALESCE(e.city, '') as "City",
+      COALESCE(e.state, '') as "State"
       FROM ${EMPLOYEES_TABLE} e
     ${where}
     ORDER BY e.created_at DESC
@@ -333,12 +332,12 @@ async function fetchLeaveData(filters, startDate, endDate) {
       e.first_name || ' ' || e.last_name as "Employee Name",
       e.employee_id as "Employee ID",
       lr.leave_type as "Leave Type",
-      lr.start_date as "Start Date",
-      lr.end_date as "End Date",
+      TO_CHAR(lr.start_date, 'DD Mon YYYY') as "Start Date",
+      TO_CHAR(lr.end_date, 'DD Mon YYYY') as "End Date",
       lr.total_days as "Total Days",
       lr.status as "Status",
       lr.reason as "Reason",
-      lr.applied_date as "Applied Date"
+      TO_CHAR(lr.applied_date, 'DD Mon YYYY') as "Applied Date"
       FROM ${LEAVE_REQUESTS_TABLE} lr
       LEFT JOIN ${EMPLOYEES_TABLE} e ON lr.employee_id = e.id
     ${where}
@@ -403,7 +402,7 @@ async function fetchAttendanceData(filters, startDate, endDate) {
     const result = await query(
       `
       SELECT 
-        s.date as "Date",
+        TO_CHAR(s.date, 'DD Mon YYYY') as "Date",
         s.employee_name as "Employee Name",
         s.employee_id as "Employee ID",
         s.department as "Department",
@@ -556,8 +555,8 @@ async function fetchProjectData(reportType, filters, startDate, endDate) {
       p.project_type as "Type",
       p.status as "Status",
       p.priority as "Priority",
-      p.start_date as "Start Date",
-      p.end_date as "End Date",
+      TO_CHAR(p.start_date, 'DD Mon YYYY') as "Start Date",
+      TO_CHAR(p.end_date, 'DD Mon YYYY') as "End Date",
       p.estimated_budget as "Budget",
       p.progress_percentage as "Progress %",
       c.name as "Client Name"
@@ -630,7 +629,7 @@ async function fetchFinanceTransactionData(filters, startDate, endDate) {
         t.category as "Category",
         t.amount as "Amount",
         t.currency as "Currency",
-        t.transaction_date as "Date",
+        TO_CHAR(t.transaction_date, 'DD Mon YYYY') as "Date",
         t.payment_method as "Payment Method",
         t.status as "Status",
         t.description as "Description",
@@ -811,7 +810,7 @@ async function fetchSalesData(reportType, filters, startDate, endDate) {
     SELECT 
       so.order_number as "Order Number",
       c.name as "Customer",
-      so.order_date as "Order Date",
+      TO_CHAR(so.order_date, 'DD Mon YYYY') as "Order Date",
       so.status as "Status",
       so.payment_status as "Payment Status",
       so.total_amount as "Total Amount",
@@ -1441,12 +1440,11 @@ export async function downloadReport(req, res, next) {
       res.end(buffer);
       return;
     } else if (report.format === 'EXCEL') {
-      // Excel format - currently generates CSV (workaround until exceljs is installed)
-      // Excel can open CSV files natively
-      const fileName = normalizeFileName(report.file_name, report.format) || `report_${report.report_code}.csv`;
+      // Excel format - generate proper XLSX file using exceljs
+      const fileName = normalizeFileName(report.file_name, report.format) || `report_${report.report_code}.xlsx`;
       
       // Set headers first - critical for file downloads
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -1454,69 +1452,101 @@ export async function downloadReport(req, res, next) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
       
-      // Add BOM for UTF-8 to ensure Excel opens it correctly
-      const BOM = '\uFEFF';
+      // Create a new workbook and worksheet
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Report Data');
       
-      // Generate CSV content with actual data
-      let csvContent = BOM;
-      
-      // Add headers (always include headers for valid CSV)
+      // Set column headers
       if (reportData.headers && reportData.headers.length > 0) {
-        const headerRow = reportData.headers.map(h => {
-          const headerStr = sanitizeCsvCell(h);
-          return `"${headerStr}"`;
-        }).join(',');
-        csvContent += headerRow + '\r\n'; // Use \r\n for Windows compatibility
-      } else {
-        csvContent += '"No Data"\r\n';
+        worksheet.columns = reportData.headers.map((header, index) => ({
+          header: String(header || ''),
+          key: `col_${index}`,
+          width: 15
+        }));
+        
+        // Style the header row
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE0E0E0' }
+        };
+        worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
       }
       
       // Add data rows
-      const headerCountExcel = reportData.headers?.length || 0;
       if (reportData.rows && reportData.rows.length > 0) {
-        reportData.rows.forEach(row => {
+        reportData.rows.forEach((row, rowIndex) => {
           if (Array.isArray(row)) {
             // Ensure row has same number of columns as headers
             const normalizedRow = [];
-            for (let i = 0; i < headerCountExcel; i++) {
+            const headerCount = reportData.headers?.length || 0;
+            for (let i = 0; i < headerCount; i++) {
               normalizedRow.push(row[i] !== undefined ? row[i] : '');
             }
             
-            const rowContent = normalizedRow.map(cell => {
-              const cellValue = sanitizeCsvCell(cell);
-              return `"${cellValue}"`;
-            }).join(',');
-            csvContent += rowContent + '\r\n';
+            const worksheetRow = worksheet.addRow(normalizedRow);
+            
+            // Alternate row colors for better readability
+            if (rowIndex % 2 === 0) {
+              worksheetRow.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFF8F8F8' }
+              };
+            }
+            
+            // Right-align numeric columns and format numbers
+            normalizedRow.forEach((cell, colIndex) => {
+              const headerText = reportData.headers[colIndex] || '';
+              const cellValue = String(cell || '');
+              const cellObj = worksheetRow.getCell(colIndex + 1);
+              
+              if (headerText.toLowerCase().includes('salary') || 
+                  headerText.toLowerCase().includes('amount') || 
+                  headerText.toLowerCase().includes('price') ||
+                  headerText.toLowerCase().includes('total') ||
+                  headerText.toLowerCase().includes('quantity') ||
+                  headerText.toLowerCase().includes('rate') ||
+                  headerText.toLowerCase().includes('hours') ||
+                  headerText.toLowerCase().includes('days') ||
+                  headerText.toLowerCase().includes('percentage')) {
+                // Try to parse as number
+                const numValue = parseFloat(cellValue);
+                if (!isNaN(numValue)) {
+                  cellObj.value = numValue;
+                  cellObj.numFmt = '#,##0.00';
+                }
+                cellObj.alignment = { horizontal: 'right' };
+              } else if (headerText.toLowerCase().includes('status') || 
+                         headerText.toLowerCase().includes('type')) {
+                cellObj.alignment = { horizontal: 'center' };
+              }
+            });
           }
         });
       } else {
-        // If no data rows, add a message row matching header count
-        const emptyCells = headerCountExcel > 1 ? ',""'.repeat(headerCountExcel - 1) : '';
-        csvContent += `"No data found"${emptyCells}\r\n`;
+        // Add a message if no data
+        worksheet.addRow(['No data available for this report.']);
       }
       
-      // Ensure CSV ends with newline
-      if (!csvContent.endsWith('\r\n') && !csvContent.endsWith('\n')) {
-        csvContent += '\r\n';
-      }
+      // Auto-fit columns
+      worksheet.columns.forEach(column => {
+        if (column.header) {
+          column.width = Math.max(column.width || 10, column.header.length + 2);
+        }
+      });
       
-      console.log(`[Download Report ${id}] Excel File Details (CSV format):`);
+      // Write workbook to response
+      await workbook.xlsx.write(res);
+      
+      console.log(`[Download Report ${id}] Excel File Details:`);
       console.log(`  - Format: ${report.format}`);
       console.log(`  - FileName: ${fileName}`);
-      console.log(`  - Content-Type: text/csv; charset=utf-8`);
+      console.log(`  - Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`);
       console.log(`  - Headers count: ${reportData.headers?.length || 0}`);
       console.log(`  - Rows count: ${reportData.rows?.length || 0}`);
-      console.log(`  - Note: Generating CSV format (Excel can open CSV files)`);
       
-      const buffer = Buffer.from(csvContent, 'utf-8');
-      res.setHeader('Content-Length', buffer.length);
-      
-      if (res.headersSent) {
-        console.error(`[Download Report ${id}] ERROR: Headers already sent! Cannot send file.`);
-        return;
-      }
-      
-      res.end(buffer);
       return;
     } else if (report.format === 'PDF') {
       // PDF format - generate actual PDF using pdfkit
@@ -1540,80 +1570,305 @@ export async function downloadReport(req, res, next) {
       // Pipe PDF to response
       doc.pipe(res);
       
-      // Header Section
-      doc.fontSize(20).font('Helvetica-Bold').text('REPORT', { align: 'center' });
-      doc.moveDown(0.5);
-      doc.fontSize(12).font('Helvetica').text(report.report_name || 'Report', { align: 'center' });
-      doc.moveDown(1);
-      
-      // Report Information Section
-      let yPosition = 120;
+      // Header Section with better design
       const leftMargin = 50;
+      const rightMargin = 545;
+      const pageWidth = rightMargin - leftMargin;
       
-      doc.fontSize(10).font('Helvetica-Bold').text('Report Information:', leftMargin, yPosition);
-      yPosition += 20;
+      // Title Section with background
+      doc.rect(leftMargin, 50, pageWidth, 35)
+         .fillColor('#2c3e50')
+         .fill()
+         .fillColor('white');
+      
+      doc.fontSize(24).font('Helvetica-Bold')
+         .fillColor('white')
+         .text('REPORT', leftMargin + pageWidth / 2, 60, { align: 'center', width: pageWidth });
+      
+      doc.fontSize(14).font('Helvetica')
+         .text(report.report_name || 'Report', leftMargin + pageWidth / 2, 75, { align: 'center', width: pageWidth });
+      
+      doc.fillColor('black'); // Reset fill color
+      
+      // Report Information Section with better layout
+      let yPosition = 100;
+      
+      // Information box
+      doc.rect(leftMargin, yPosition, pageWidth, 60)
+         .fillColor('#f8f9fa')
+         .fill()
+         .strokeColor('#dee2e6')
+         .stroke()
+         .fillColor('black');
+      
+      yPosition += 10;
+      doc.fontSize(11).font('Helvetica-Bold').text('Report Information', leftMargin + 10, yPosition);
+      yPosition += 18;
+      
       doc.font('Helvetica').fontSize(9);
+      const infoLeftCol = leftMargin + 15;
+      const infoRightCol = leftMargin + pageWidth / 2 + 10;
+      let infoY = yPosition;
       
-      doc.text(`Report Code: ${report.report_code || 'N/A'}`, leftMargin, yPosition);
-      yPosition += 15;
-      doc.text(`Report Type: ${report.report_type || 'N/A'}`, leftMargin, yPosition);
-      yPosition += 15;
+      // Left column
+      doc.font('Helvetica-Bold').text(`Report Code:`, infoLeftCol, infoY);
+      doc.font('Helvetica').text(report.report_code || 'N/A', infoLeftCol + 80, infoY);
+      infoY += 12;
       
+      doc.font('Helvetica-Bold').text(`Report Type:`, infoLeftCol, infoY);
+      doc.font('Helvetica').text(report.report_type || 'N/A', infoLeftCol + 80, infoY);
+      infoY += 12;
+      
+      // Right column
+      infoY = yPosition;
       if (report.start_date || report.end_date) {
         const dateRange = [
-          report.start_date ? new Date(report.start_date).toLocaleDateString() : '',
-          report.end_date ? new Date(report.end_date).toLocaleDateString() : ''
+          report.start_date ? new Date(report.start_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '',
+          report.end_date ? new Date(report.end_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : ''
         ].filter(Boolean).join(' - ');
-        doc.text(`Date Range: ${dateRange || 'N/A'}`, leftMargin, yPosition);
-        yPosition += 15;
+        doc.font('Helvetica-Bold').text(`Date Range:`, infoRightCol, infoY);
+        doc.font('Helvetica').text(dateRange || 'N/A', infoRightCol + 85, infoY);
+        infoY += 12;
       }
       
-      doc.text(`Generated At: ${report.generated_at ? new Date(report.generated_at).toLocaleDateString() : new Date().toLocaleDateString()}`, leftMargin, yPosition);
-      yPosition += 20;
+      const generatedDate = report.generated_at 
+        ? new Date(report.generated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      doc.font('Helvetica-Bold').text(`Generated At:`, infoRightCol, infoY);
+      doc.font('Helvetica').text(generatedDate, infoRightCol + 85, infoY);
+      
+      yPosition += 70;
       
       // Data Table Section
       if (reportData.headers && reportData.headers.length > 0 && reportData.rows && reportData.rows.length > 0) {
-        // Draw table header line
+        // Helper function to determine column alignment
+        const getColumnAlignment = (headerText, cellValue) => {
+          const header = String(headerText || '').toLowerCase();
+          const value = String(cellValue || '');
+          
+          // Right align for numeric columns
+          if (header.includes('salary') || header.includes('amount') || header.includes('price') || 
+              header.includes('total') || header.includes('quantity') || header.includes('rate') ||
+              header.includes('hours') || header.includes('days') || header.includes('percentage') ||
+              /^\d+\.?\d*$/.test(value.trim())) {
+            return 'right';
+          }
+          // Center align for status/type columns
+          if (header.includes('status') || header.includes('type') || header.includes('priority')) {
+            return 'center';
+          }
+          // Left align for text columns
+          return 'left';
+        };
+        
+        // Calculate optimal column widths based on content
+        const calculateColumnWidths = () => {
+          const totalWidth = 545 - leftMargin;
+          const numColumns = reportData.headers.length;
+          
+          // Use equal distribution for better alignment, but with minimum widths
+          const equalWidth = totalWidth / numColumns;
+          const minColumnWidth = 35;
+          const maxColumnWidth = 100;
+          
+          // Get max content width for each column to determine if we need adjustments
+          const contentWidths = reportData.headers.map((header, colIndex) => {
+            let maxWidth = doc.widthOfString(String(header || ''), { fontSize: 9 });
+            
+            // Check first 20 rows for content width
+            const sampleRows = reportData.rows.slice(0, Math.min(20, reportData.rows.length));
+            sampleRows.forEach(row => {
+              const cellText = String(row[colIndex] || '');
+              const cellWidth = doc.widthOfString(cellText, { fontSize: 8 });
+              maxWidth = Math.max(maxWidth, cellWidth);
+            });
+            
+            return Math.max(minColumnWidth, Math.min(maxWidth + 15, maxColumnWidth));
+          });
+          
+          // Use equal widths but ensure minimums are met
+          const columnWidths = contentWidths.map(cw => Math.max(cw, equalWidth * 0.7));
+          
+          // Normalize to fit total width exactly
+          const totalCalculated = columnWidths.reduce((sum, w) => sum + w, 0);
+          const scaleFactor = totalWidth / totalCalculated;
+          
+          return columnWidths.map(w => Math.floor(w * scaleFactor));
+        };
+        
+        const columnWidths = calculateColumnWidths();
+        const cellPadding = 5;
+        const rowSpacing = 4;
+        
+        // Draw table header background
+        doc.rect(leftMargin, yPosition, 545 - leftMargin, 25)
+           .fillColor('#f0f0f0')
+           .fill()
+           .fillColor('black'); // Reset fill color
+        
+        // Draw table header line (top)
         doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
-        yPosition += 10;
+        yPosition += 5;
+        
+        // Draw vertical column separators for header
+        let separatorX = leftMargin;
+        reportData.headers.forEach((header, index) => {
+          if (index > 0) {
+            doc.moveTo(separatorX, yPosition - 5)
+               .lineTo(separatorX, yPosition + 20)
+               .strokeColor('#d0d0d0')
+               .stroke()
+               .strokeColor('black');
+          }
+          separatorX += columnWidths[index];
+        });
         
         // Table Headers
         doc.fontSize(9).font('Helvetica-Bold');
-        const columnWidth = (545 - leftMargin) / reportData.headers.length;
+        let xPosition = leftMargin;
+        
         reportData.headers.forEach((header, index) => {
-          doc.text(String(header || ''), leftMargin + (index * columnWidth), yPosition, {
-            width: columnWidth - 5,
+          const headerText = String(header || '');
+          const colWidth = columnWidths[index];
+          const alignment = getColumnAlignment(headerText, '');
+          
+          // Always start from left edge of column + padding
+          const textX = xPosition + cellPadding;
+          const textWidth = colWidth - (cellPadding * 2);
+          
+          doc.text(headerText, textX, yPosition, {
+            width: textWidth,
+            align: alignment,
             ellipsis: true
           });
+          
+          xPosition += colWidth;
         });
-        yPosition += 15;
+        
+        yPosition += 20;
         
         // Draw separator line
         doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
-        yPosition += 10;
+        yPosition += rowSpacing;
+        
+        // Store separator positions for reuse
+        const separatorPositions = [];
+        let sepX = leftMargin;
+        reportData.headers.forEach((header, index) => {
+          if (index > 0) {
+            separatorPositions.push(sepX);
+          }
+          sepX += columnWidths[index];
+        });
         
         // Table Rows
         doc.font('Helvetica').fontSize(8);
+        const baseRowHeight = 16;
+        
         reportData.rows.forEach((row, rowIndex) => {
           // Check if we need a new page
-          if (yPosition > 700) {
+          if (yPosition + baseRowHeight > 750) {
             doc.addPage();
             yPosition = 50;
+            
+            // Redraw table header on new page
+            doc.rect(leftMargin, yPosition, 545 - leftMargin, 25)
+               .fillColor('#f0f0f0')
+               .fill()
+               .fillColor('black');
+            
+            doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
+            yPosition += 5;
+            
+            doc.fontSize(9).font('Helvetica-Bold');
+            xPosition = leftMargin;
+            reportData.headers.forEach((header, index) => {
+              const headerText = String(header || '');
+              const colWidth = columnWidths[index];
+              const alignment = getColumnAlignment(headerText, '');
+              
+              const textX = xPosition + cellPadding;
+              const textWidth = colWidth - (cellPadding * 2);
+              
+              doc.text(headerText, textX, yPosition, {
+                width: textWidth,
+                align: alignment,
+                ellipsis: true
+              });
+              
+              xPosition += colWidth;
+            });
+            
+            yPosition += 20;
+            doc.moveTo(leftMargin, yPosition).lineTo(545, yPosition).stroke();
+            yPosition += rowSpacing;
+            doc.font('Helvetica').fontSize(8);
           }
           
-          // Draw row data
+          // Calculate maximum height needed for this row first
+          let maxCellHeight = baseRowHeight;
           row.forEach((cell, colIndex) => {
-            doc.text(String(cell || ''), leftMargin + (colIndex * columnWidth), yPosition, {
-              width: columnWidth - 5,
-              ellipsis: true
-            });
+            const cellText = String(cell || '');
+            if (cellText) {
+              const colWidth = columnWidths[colIndex];
+              const textHeight = doc.heightOfString(cellText, {
+                width: colWidth - (cellPadding * 2),
+                ellipsis: true
+              });
+              maxCellHeight = Math.max(maxCellHeight, textHeight + (cellPadding * 2));
+            }
           });
-          yPosition += 12;
           
-          // Add subtle line between rows (every 5 rows)
-          if ((rowIndex + 1) % 5 === 0 && rowIndex < reportData.rows.length - 1) {
-            doc.moveTo(leftMargin, yPosition - 2).lineTo(545, yPosition - 2).stroke();
-            yPosition += 5;
+          // Alternate row background color for better readability
+          if (rowIndex % 2 === 0) {
+            doc.rect(leftMargin, yPosition - 2, 545 - leftMargin, maxCellHeight + 2)
+               .fillColor('#fafafa')
+               .fill()
+               .fillColor('black');
+          }
+          
+          // Draw vertical column separators for each row
+          separatorPositions.forEach(sepX => {
+            doc.moveTo(sepX, yPosition - 2)
+               .lineTo(sepX, yPosition + maxCellHeight + 2)
+               .strokeColor('#e0e0e0')
+               .stroke()
+               .strokeColor('black');
+          });
+          
+          // Draw row data with proper alignment
+          xPosition = leftMargin;
+          row.forEach((cell, colIndex) => {
+            const cellText = String(cell || '');
+            const colWidth = columnWidths[colIndex];
+            const headerText = reportData.headers[colIndex];
+            const alignment = getColumnAlignment(headerText, cellText);
+            
+            // Always use left edge of column + padding for x position
+            // The align parameter will handle alignment within the width
+            const textX = xPosition + cellPadding;
+            const textWidth = colWidth - (cellPadding * 2);
+            
+            doc.text(cellText, textX, yPosition + cellPadding, {
+              width: textWidth,
+              align: alignment,
+              ellipsis: true,
+              lineGap: 1
+            });
+            
+            xPosition += colWidth;
+          });
+          
+          // Move to next row position
+          yPosition += maxCellHeight + rowSpacing;
+          
+          // Add subtle line between rows (every 10 rows for cleaner look)
+          if ((rowIndex + 1) % 10 === 0 && rowIndex < reportData.rows.length - 1) {
+            doc.moveTo(leftMargin, yPosition - 1).lineTo(545, yPosition - 1)
+               .strokeColor('#cccccc')
+               .stroke()
+               .strokeColor('black'); // Reset stroke color
+            yPosition += 2;
           }
         });
         
