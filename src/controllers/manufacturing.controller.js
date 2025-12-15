@@ -121,6 +121,7 @@ export async function createProductionOrder(req, res, next) {
       priority,
       production_line,
       shift,
+      cost,
       supervisor_id,
       quality_status,
       notes
@@ -175,12 +176,13 @@ export async function createProductionOrder(req, res, next) {
         supervisor_id,
         quality_status,
         notes,
+        cost,
         created_by,
         created_at,
         updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -199,6 +201,7 @@ export async function createProductionOrder(req, res, next) {
         supervisor_id || null,
         quality_status || 'PENDING',
         notes || null,
+        cost || 0,
         req.user?.user_id || null
       ]
     );

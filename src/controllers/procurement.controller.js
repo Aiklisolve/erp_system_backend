@@ -429,3 +429,70 @@ export async function deletePurchaseOrder(req, res, next) {
     next(err);
   }
 }
+// requested by users api//
+
+export async function getManagers(req, res) {
+  try {
+    const sql = `
+      SELECT 
+        id,
+        full_name,
+        role
+      FROM users
+      WHERE role ILIKE '%manager%'   -- ANY type of manager
+      ORDER BY full_name ASC;
+    `;
+
+    const result = await query(sql);
+
+    const data = result.rows.map(user => ({
+      id: user.id,
+      full_name:user.full_name,
+      role: user.role
+    }));
+
+    return res.json({
+      success: true,
+      data
+    });
+  } catch (err) {
+    console.error("getManagers error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch managers"
+    });
+  }
+}
+// approved by//
+export async function getApprovedByUsers(req, res) {
+  try {
+    const sql = `
+      SELECT 
+        id,
+        full_name,
+        role
+      FROM users
+      WHERE role IN ('ADMIN')
+      ORDER BY full_name ASC;
+    `;
+
+    const result = await query(sql);
+
+    const data = result.rows.map(u => ({
+      id: u.id,
+      full_name: u.full_name,
+      role: u.role
+    }));
+
+    return res.json({
+      success: true,
+      data
+    });
+  } catch (err) {
+    console.error("getApprovedByUsers error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch approved-by users"
+    });
+  }
+}

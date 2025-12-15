@@ -2,8 +2,12 @@
 import { Router } from 'express';
 import { authMiddleware, authorize } from '../middleware/auth.js';
 import * as procurementController from '../controllers/procurement.controller.js';
+import { getManagers ,getApprovedByUsers} from "../controllers/procurement.controller.js";
 
 const router = Router();
+router.get("/managers/list", getManagers);
+router.get("/approved/list", getApprovedByUsers);
+
 
 // All procurement routes require auth
 router.use(authMiddleware);
