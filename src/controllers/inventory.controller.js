@@ -48,12 +48,13 @@ export async function listProducts(req, res, next) {
       `
       SELECT 
         p.*,
-        COALESCE(s.quantity_on_hand, 0) as qty_on_hand,
-        COALESCE(s.quantity_available, 0) as qty_available,
-        COALESCE(s.quantity_reserved, 0) as qty_reserved
+        COALESCE(SUM(s.quantity_on_hand), 0) as qty_on_hand,
+        COALESCE(SUM(s.quantity_available), 0) as qty_available,
+        COALESCE(SUM(s.quantity_reserved), 0) as qty_reserved
       FROM products p
       LEFT JOIN inventory_stock s ON p.id = s.product_id
       ${where}
+      GROUP BY p.id
       ORDER BY p.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
@@ -230,37 +231,75 @@ export async function updateProduct(req, res, next) {
 
     // Update inventory stock if qty_on_hand is provided
     if (body.qty_on_hand !== undefined && body.qty_on_hand !== null) {
-      const warehouseId = body.warehouse_id || 1;
+      const warehouseId = parseInt(body.warehouse_id) || 1;
+      const productId = parseInt(id);
+      const qtyOnHand = parseInt(body.qty_on_hand);
       
-      // Check if stock record exists
-      const stockRes = await query(
-        `SELECT * FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2`,
-        [id, warehouseId]
+      // Ensure we're working with numbers, not strings
+      if (isNaN(qtyOnHand)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid quantity_on_hand value'
+        });
+      }
+      
+      // Check for any existing stock records (including duplicates)
+      const allStockRecords = await query(
+        `SELECT id, product_id, warehouse_id, quantity_on_hand FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2`,
+        [productId, warehouseId]
+      );
+      
+      console.log(`[UPDATE STOCK] Product ID: ${productId} (type: ${typeof productId}), Warehouse ID: ${warehouseId} (type: ${typeof warehouseId})`);
+      console.log(`[UPDATE STOCK] Found ${allStockRecords.rowCount} existing stock record(s)`);
+      if (allStockRecords.rowCount > 0) {
+        console.log(`[UPDATE STOCK] Current records:`, allStockRecords.rows);
+      }
+      console.log(`[UPDATE STOCK] New qty_on_hand: ${qtyOnHand} (type: ${typeof qtyOnHand})`);
+      
+      // If multiple records exist (shouldn't happen due to unique constraint), delete duplicates first
+      if (allStockRecords.rowCount > 1) {
+        console.log(`[UPDATE STOCK] WARNING: Multiple stock records found! Keeping only the first one.`);
+        const keepId = allStockRecords.rows[0].id;
+        await query(
+          `DELETE FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2 AND id != $3`,
+          [productId, warehouseId, keepId]
+        );
+      }
+      
+      // Now UPDATE the record - this will REPLACE the value
+      // Use explicit type casting to ensure WHERE clause matches correctly
+      const updateResult = await query(
+        `
+        UPDATE inventory_stock
+        SET
+          quantity_on_hand = $1::integer,
+          quantity_available = ($1::integer - quantity_reserved),
+          updated_at = NOW()
+        WHERE product_id = $2::integer AND warehouse_id = $3::integer
+        `,
+        [qtyOnHand, productId, warehouseId]
       );
 
-      if (stockRes.rowCount > 0) {
-        // Update existing stock
-        await query(
-          `
-          UPDATE inventory_stock
-          SET
-            quantity_on_hand = $1,
-            quantity_available = $1 - quantity_reserved,
-            updated_at = NOW()
-          WHERE product_id = $2 AND warehouse_id = $3
-          `,
-          [body.qty_on_hand, id, warehouseId]
-        );
-      } else {
-        // Create new stock record
+      console.log(`[UPDATE STOCK] UPDATE query executed. Rows updated: ${updateResult.rowCount}`);
+
+      // Only INSERT if no record was updated (record doesn't exist)
+      if (updateResult.rowCount === 0) {
+        console.log(`[UPDATE STOCK] No existing record found, inserting new record`);
         await query(
           `
           INSERT INTO inventory_stock (product_id, warehouse_id, quantity_on_hand, quantity_reserved, quantity_available)
           VALUES ($1, $2, $3, 0, $3)
           `,
-          [id, warehouseId, body.qty_on_hand]
+          [productId, warehouseId, qtyOnHand]
         );
       }
+      
+      // Verify the final value
+      const verifyStock = await query(
+        `SELECT quantity_on_hand, quantity_available FROM inventory_stock WHERE product_id = $1 AND warehouse_id = $2`,
+        [productId, warehouseId]
+      );
+      console.log(`[UPDATE STOCK] Final verification - qty_on_hand: ${verifyStock.rows[0]?.quantity_on_hand || 'N/A'}, qty_available: ${verifyStock.rows[0]?.quantity_available || 'N/A'}`);
     }
 
     return res.json({
@@ -1689,17 +1728,10 @@ export async function listPurchaseOrdersForAssignment(req, res, next) {
 
     const dataRes = await query(
       `
-      SELECT 
-        po.id,
-        po.po_number,
-        po.order_date,
-        po.status,
-        po.total_amount,
-        v.vendor_name as supplier_name
-      FROM purchase_orders po
-      LEFT JOIN vendors v ON po.supplier_id = v.id
-      WHERE po.status != 'CANCELLED'
-      ORDER BY po.created_at DESC
+      SELECT id, po_number, supplier_name, order_date, status, total_amount
+      FROM purchase_orders
+      WHERE status != 'CANCELLED'
+      ORDER BY created_at DESC
       LIMIT $1 OFFSET $2
       `,
       [limit, offset]
@@ -1708,8 +1740,8 @@ export async function listPurchaseOrdersForAssignment(req, res, next) {
     const countRes = await query(
       `
       SELECT COUNT(*)::int AS count
-      FROM purchase_orders po
-      WHERE po.status != 'CANCELLED'
+      FROM purchase_orders
+      WHERE status != 'CANCELLED'
       `
     );
 
