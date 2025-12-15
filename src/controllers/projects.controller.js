@@ -209,6 +209,15 @@ export async function createProject(req, res, next) {
       errors.budget = 'Budget must be a positive number';
     }
 
+    // Validate client phone number format (+91 followed by 10 digits) if provided
+    if (body.client_phone) {
+      const phoneStr = String(body.client_phone).trim();
+      const phoneRegex = /^\+91[0-9]{10}$/;
+      if (!phoneRegex.test(phoneStr)) {
+        errors.client_phone = 'Client phone must be in format +91XXXXXXXXXX (10 digits after +91)';
+      }
+    }
+
     // Validate project_type enum
     const validProjectTypes = ['FIXED_PRICE', 'TIME_MATERIALS', 'HYBRID', 'SUPPORT', 'CONSULTING', 'IMPLEMENTATION', 'OTHER'];
     if (body.project_type && !validProjectTypes.includes(body.project_type.toUpperCase())) {
@@ -251,7 +260,6 @@ export async function createProject(req, res, next) {
 
     // Insert project - only include columns that exist in the database
     // Actual columns: estimated_budget (not budget), project_manager_id (not project_manager)
-    // No currency or contract_number columns exist
     const insertRes = await query(
       `
       INSERT INTO ${PROJECTS_TABLE} (
@@ -259,6 +267,7 @@ export async function createProject(req, res, next) {
         client_id, project_manager_id,
         project_type, status, priority, progress_percentage,
         start_date, end_date, estimated_budget,
+        contract_number,
         created_by, created_at, updated_at
       )
       VALUES (
@@ -266,7 +275,8 @@ export async function createProject(req, res, next) {
         $4, $5,
         $6, $7, $8, $9,
         $10, $11, $12,
-        $13, NOW(), NOW()
+        $13,
+        $14, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -283,6 +293,7 @@ export async function createProject(req, res, next) {
         body.start_date,
         body.end_date || null,
         body.budget ? parseFloat(body.budget) : null, // Map budget to estimated_budget
+        body.contract_number || null,
         req.user?.user_id || null
       ]
     );
@@ -377,6 +388,22 @@ export async function updateProject(req, res, next) {
       }
     }
 
+    // Validate client phone number format (+91 followed by 10 digits) if provided
+    if (body.client_phone !== undefined && body.client_phone !== null && body.client_phone !== '') {
+      const phoneStr = String(body.client_phone).trim();
+      const phoneRegex = /^\+91[0-9]{10}$/;
+      if (!phoneRegex.test(phoneStr)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          error: 'VALIDATION_ERROR',
+          details: {
+            client_phone: 'Client phone must be in format +91XXXXXXXXXX (10 digits after +91)'
+          }
+        });
+      }
+    }
+
     // Build dynamic update query
     const updates = [];
     const params = [];
@@ -452,25 +479,17 @@ export async function updateProject(req, res, next) {
       idx++;
     }
 
-    // currency and contract_number don't exist in the database, skip them
-    // if (body.currency !== undefined) {
-    //   updates.push(`currency = $${idx}`);
-    //   params.push(body.currency);
-    //   idx++;
-    // }
-
     if (body.project_manager_id !== undefined) {
       updates.push(`project_manager_id = $${idx}`);
       params.push(body.project_manager_id);
       idx++;
     }
 
-    // contract_number doesn't exist in the database, skip it
-    // if (body.contract_number !== undefined) {
-    //   updates.push(`contract_number = $${idx}`);
-    //   params.push(body.contract_number);
-    //   idx++;
-    // }
+    if (body.contract_number !== undefined) {
+      updates.push(`contract_number = $${idx}`);
+      params.push(body.contract_number);
+      idx++;
+    }
 
     if (updates.length === 0) {
       // No fields to update, just return the current project

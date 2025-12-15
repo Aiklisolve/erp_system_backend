@@ -266,8 +266,86 @@ export async function createTask(req, res, next) {
     const status = body.status.toUpperCase();
 
     // Get assigned_to user details from erp_users if assigned_to is provided
-    const assignedToId = body.assigned_to || body.assigned_to;
-    const assignedById = body.assigned_by || body.assigned_by;
+    const assignedToId = body.assigned_to || null;
+    const assignedById = body.assigned_by || null;
+
+    // Validate assigned_to exists in erp_users table (foreign key references erp_users.id)
+    if (assignedToId) {
+      const erpUserCheck = await query(
+        `SELECT id FROM ${ERP_USERS_TABLE} WHERE id = $1`,
+        [assignedToId]
+      );
+      
+      if (erpUserCheck.rows.length === 0) {
+        // Check if user exists in users table and has an erp_user_id
+        const userCheck = await query(
+          `SELECT id, erp_user_id FROM ${USERS_TABLE} WHERE id = $1`,
+          [assignedToId]
+        );
+        
+        if (userCheck.rows.length > 0) {
+          const user = userCheck.rows[0];
+          if (user.erp_user_id) {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Validation failed',
+                details: [{
+                  field: 'assigned_to',
+                  message: `User with ID ${assignedToId} exists in users table but assigned_to must reference erp_users table. Please use erp_user_id: ${user.erp_user_id} instead.`
+                }]
+              }
+            });
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Validation failed',
+                details: [{
+                  field: 'assigned_to',
+                  message: `User with ID ${assignedToId} exists in users table but has no erp_user_id. assigned_to must reference erp_users table.`
+                }]
+              }
+            });
+          }
+        }
+        
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Validation failed',
+            details: [{
+              field: 'assigned_to',
+              message: `User with ID ${assignedToId} does not exist in erp_users table`
+            }]
+          }
+        });
+      }
+    }
+
+    // Validate assigned_by exists in users table if provided
+    if (assignedById) {
+      const assignedByCheck = await query(
+        `SELECT id FROM ${USERS_TABLE} WHERE id = $1`,
+        [assignedById]
+      );
+      if (assignedByCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Validation failed',
+            details: [{
+              field: 'assigned_by',
+              message: `User with ID ${assignedById} does not exist in users table`
+            }]
+          }
+        });
+      }
+    }
 
     const insertRes = await query(
       `
@@ -453,6 +531,84 @@ export async function updateTask(req, res, next) {
       updates.push(`status = $${idx}`);
       params.push(body.status.toUpperCase());
       idx++;
+    }
+
+    // Validate assigned_to exists in erp_users table if being updated (foreign key references erp_users.id)
+    if (body.assigned_to !== undefined && body.assigned_to !== null) {
+      const erpUserCheck = await query(
+        `SELECT id FROM ${ERP_USERS_TABLE} WHERE id = $1`,
+        [body.assigned_to]
+      );
+      
+      if (erpUserCheck.rows.length === 0) {
+        // Check if user exists in users table and has an erp_user_id
+        const userCheck = await query(
+          `SELECT id, erp_user_id FROM ${USERS_TABLE} WHERE id = $1`,
+          [body.assigned_to]
+        );
+        
+        if (userCheck.rows.length > 0) {
+          const user = userCheck.rows[0];
+          if (user.erp_user_id) {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Validation failed',
+                details: [{
+                  field: 'assigned_to',
+                  message: `User with ID ${body.assigned_to} exists in users table but assigned_to must reference erp_users table. Please use erp_user_id: ${user.erp_user_id} instead.`
+                }]
+              }
+            });
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Validation failed',
+                details: [{
+                  field: 'assigned_to',
+                  message: `User with ID ${body.assigned_to} exists in users table but has no erp_user_id. assigned_to must reference erp_users table.`
+                }]
+              }
+            });
+          }
+        }
+        
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Validation failed',
+            details: [{
+              field: 'assigned_to',
+              message: `User with ID ${body.assigned_to} does not exist in erp_users table`
+            }]
+          }
+        });
+      }
+    }
+
+    // Validate assigned_by exists in users table if being updated
+    if (body.assigned_by !== undefined && body.assigned_by !== null) {
+      const assignedByCheck = await query(
+        `SELECT id FROM ${USERS_TABLE} WHERE id = $1`,
+        [body.assigned_by]
+      );
+      if (assignedByCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Validation failed',
+            details: [{
+              field: 'assigned_by',
+              message: `User with ID ${body.assigned_by} does not exist in users table`
+            }]
+          }
+        });
+      }
     }
 
     // Handle other fields - map API field names to database column names
