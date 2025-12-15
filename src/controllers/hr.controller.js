@@ -71,6 +71,9 @@ export async function listEmployees(req, res, next) {
       idx++;
     }
 
+    // Always filter out soft-deleted records
+    conditions.push(`(e.deleted_flag IS NULL OR e.deleted_flag = false)`);
+
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // Get total count
@@ -126,9 +129,9 @@ export async function listEmployees(req, res, next) {
           'last_login', u.last_login
         ) as user
       FROM ${EMPLOYEES_TABLE} e
-      LEFT JOIN ${EMPLOYEES_TABLE} m ON e.manager_id = m.id
-      LEFT JOIN ${ERP_USERS_TABLE} eu ON eu.employee_number = e.employee_id
-      LEFT JOIN ${USERS_TABLE} u ON u.erp_user_id = eu.id
+      LEFT JOIN ${EMPLOYEES_TABLE} m ON e.manager_id = m.id AND (m.deleted_flag IS NULL OR m.deleted_flag = false)
+      LEFT JOIN ${ERP_USERS_TABLE} eu ON eu.employee_number = e.employee_id AND (eu.deleted_flag IS NULL OR eu.deleted_flag = false)
+      LEFT JOIN ${USERS_TABLE} u ON u.erp_user_id = eu.id AND (u.deleted_flag IS NULL OR u.deleted_flag = false)
       ${where}
       ORDER BY e.created_at DESC, e.id DESC
       LIMIT $${idx} OFFSET $${idx + 1}
@@ -196,10 +199,10 @@ export async function getEmployeeById(req, res, next) {
           'last_login', u.last_login
         ) as user
       FROM ${EMPLOYEES_TABLE} e
-      LEFT JOIN ${EMPLOYEES_TABLE} m ON e.manager_id = m.id
-      LEFT JOIN ${ERP_USERS_TABLE} eu ON eu.employee_number = e.employee_id
-      LEFT JOIN ${USERS_TABLE} u ON u.erp_user_id = eu.id
-      WHERE e.id = $1
+      LEFT JOIN ${EMPLOYEES_TABLE} m ON e.manager_id = m.id AND (m.deleted_flag IS NULL OR m.deleted_flag = false)
+      LEFT JOIN ${ERP_USERS_TABLE} eu ON eu.employee_number = e.employee_id AND (eu.deleted_flag IS NULL OR eu.deleted_flag = false)
+      LEFT JOIN ${USERS_TABLE} u ON u.erp_user_id = eu.id AND (u.deleted_flag IS NULL OR u.deleted_flag = false)
+      WHERE e.id = $1 AND (e.deleted_flag IS NULL OR e.deleted_flag = false)
       `,
       [id]
     );
@@ -273,10 +276,10 @@ export async function getEmployeeByEmployeeId(req, res, next) {
           'last_login', u.last_login
         ) as user
       FROM ${EMPLOYEES_TABLE} e
-      LEFT JOIN ${EMPLOYEES_TABLE} m ON e.manager_id = m.id
-      LEFT JOIN ${ERP_USERS_TABLE} eu ON eu.employee_number = e.employee_id
-      LEFT JOIN ${USERS_TABLE} u ON u.erp_user_id = eu.id
-      WHERE e.employee_id = $1
+      LEFT JOIN ${EMPLOYEES_TABLE} m ON e.manager_id = m.id AND (m.deleted_flag IS NULL OR m.deleted_flag = false)
+      LEFT JOIN ${ERP_USERS_TABLE} eu ON eu.employee_number = e.employee_id AND (eu.deleted_flag IS NULL OR eu.deleted_flag = false)
+      LEFT JOIN ${USERS_TABLE} u ON u.erp_user_id = eu.id AND (u.deleted_flag IS NULL OR u.deleted_flag = false)
+      WHERE e.employee_id = $1 AND (e.deleted_flag IS NULL OR e.deleted_flag = false)
       `,
       [employee_id]
     );
@@ -292,6 +295,74 @@ export async function getEmployeeByEmployeeId(req, res, next) {
       success: true,
       data: {
         employee: employeeRes.rows[0]
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/v1/hr/managers
+export async function listManagers(req, res, next) {
+  try {
+    const { search, department } = req.query;
+
+    const conditions = [];
+    const params = [];
+    let idx = 1;
+
+    // Filter by position = 'Manager' (case-insensitive)
+    conditions.push(`UPPER(e.position) = UPPER($${idx})`);
+    params.push('Manager');
+    idx++;
+
+    // Always filter out soft-deleted records
+    conditions.push(`(e.deleted_flag IS NULL OR e.deleted_flag = false)`);
+
+    // Filter by department if provided
+    if (department) {
+      conditions.push(`UPPER(e.department) = UPPER($${idx})`);
+      params.push(department);
+      idx++;
+    }
+
+    // Search filter
+    if (search) {
+      conditions.push(
+        `(e.first_name ILIKE $${idx} OR e.last_name ILIKE $${idx} OR e.email ILIKE $${idx} OR e.employee_id ILIKE $${idx})`
+      );
+      params.push(`%${search}%`);
+      idx++;
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const managersRes = await query(
+      `
+      SELECT 
+        e.id,
+        e.employee_id,
+        e.first_name,
+        e.last_name,
+        e.first_name || ' ' || e.last_name as full_name,
+        e.email,
+        e.phone,
+        e.department,
+        e.position,
+        e.status,
+        e.is_active
+      FROM ${EMPLOYEES_TABLE} e
+      ${where}
+      ORDER BY e.first_name, e.last_name
+      LIMIT 100
+      `,
+      params
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        managers: managersRes.rows
       }
     });
   } catch (err) {
@@ -325,19 +396,19 @@ export async function createEmployee(req, res, next) {
       });
     }
 
-    // Check if email already exists in employees, erp_users, or users
+    // Check if email already exists in employees, erp_users, or users (exclude deleted)
     const existingEmployee = await query(
-      `SELECT id FROM ${EMPLOYEES_TABLE} WHERE email = $1`,
+      `SELECT id FROM ${EMPLOYEES_TABLE} WHERE email = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [body.email]
     );
 
     const existingErpUser = await query(
-      `SELECT id FROM ${ERP_USERS_TABLE} WHERE email = $1`,
+      `SELECT id FROM ${ERP_USERS_TABLE} WHERE email = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [body.email]
     );
 
     const existingUser = await query(
-      `SELECT id FROM ${USERS_TABLE} WHERE email = $1`,
+      `SELECT id FROM ${USERS_TABLE} WHERE email = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [body.email]
     );
 
@@ -577,7 +648,7 @@ export async function updateEmployee(req, res, next) {
     const body = req.body;
 
     const existingRes = await query(
-      `SELECT * FROM ${EMPLOYEES_TABLE} WHERE id = $1`,
+      `SELECT * FROM ${EMPLOYEES_TABLE} WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [id]
     );
 
@@ -593,10 +664,10 @@ export async function updateEmployee(req, res, next) {
 
     const existing = existingRes.rows[0];
 
-    // Check if employee_id or email conflicts with another employee
+    // Check if employee_id or email conflicts with another employee (exclude deleted)
     if (body.employee_id || body.email) {
       const conflictRes = await query(
-        `SELECT id FROM ${EMPLOYEES_TABLE} WHERE (employee_id = $1 OR email = $2) AND id != $3`,
+        `SELECT id FROM ${EMPLOYEES_TABLE} WHERE (employee_id = $1 OR email = $2) AND id != $3 AND (deleted_flag IS NULL OR deleted_flag = false)`,
         [body.employee_id || existing.employee_id, body.email || existing.email, id]
       );
 
@@ -736,7 +807,7 @@ export async function updateEmployee(req, res, next) {
       [existing.employee_id]
     );
 
-    if (erpUserRes.rows.length > 0 && (body.email || body.first_name || body.last_name || body.department || body.role)) {
+    if (erpUserRes.rows.length > 0 && (body.email || body.first_name || body.last_name || body.department || body.role || body.address || body.city || body.state || body.pincode || body.postal_code)) {
       const erpUpdates = [];
       const erpParams = [];
       let erpIdx = 1;
@@ -764,6 +835,26 @@ export async function updateEmployee(req, res, next) {
       if (body.role) {
         erpUpdates.push(`designation = $${erpIdx}`);
         erpParams.push(body.role);
+        erpIdx++;
+      }
+      if (body.address !== undefined) {
+        erpUpdates.push(`address = $${erpIdx}`);
+        erpParams.push(body.address);
+        erpIdx++;
+      }
+      if (body.city !== undefined) {
+        erpUpdates.push(`city = $${erpIdx}`);
+        erpParams.push(body.city);
+        erpIdx++;
+      }
+      if (body.state !== undefined) {
+        erpUpdates.push(`state = $${erpIdx}`);
+        erpParams.push(body.state);
+        erpIdx++;
+      }
+      if (body.pincode !== undefined || body.postal_code !== undefined) {
+        erpUpdates.push(`pincode = $${erpIdx}`);
+        erpParams.push(body.pincode || body.postal_code);
         erpIdx++;
       }
       if (body.status) {

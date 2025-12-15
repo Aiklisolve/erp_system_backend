@@ -622,7 +622,7 @@ export async function createInvoice(req, res, next) {
     
     if (customerId) {
       const customerCheck = await query(
-        `SELECT id FROM ${CUSTOMERS_TABLE} WHERE id = $1`,
+        `SELECT id FROM ${CUSTOMERS_TABLE} WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
         [customerId]
       );
       if (customerCheck.rows.length === 0) {

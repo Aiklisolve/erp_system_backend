@@ -431,12 +431,51 @@ export async function createShift(req, res, next) {
       }
     });
   } catch (err) {
+    console.error('Error in createShift:', err);
+    
+    // Handle specific database errors
     if (err.code === '23505') { // Unique constraint violation
       return res.status(409).json({
         success: false,
         message: 'Shift number already exists'
       });
     }
+    
+    if (err.code === '23503') { // Foreign key constraint violation
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: {
+          employee_id: err.constraint?.includes('employee') 
+            ? 'Invalid employee ID. Employee does not exist.'
+            : 'Invalid reference. Please check employee_id and other related fields.'
+        }
+      });
+    }
+    
+    if (err.code === '23514') { // Check constraint violation
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: {
+          general: err.message || 'Invalid data provided. Please check all field values.'
+        }
+      });
+    }
+    
+    // For any other database error, return a user-friendly message
+    if (err.code && err.code.startsWith('23')) { // PostgreSQL constraint errors
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: {
+          general: 'Database constraint violation. Please check your input data.'
+        },
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      });
+    }
+    
+    // Pass other errors to error handler middleware
     next(err);
   }
 }

@@ -15,12 +15,54 @@ export const pool = new Pool({
   ssl: isLocalDb ? false : { rejectUnauthorized: false }
 });
 
+// Handle pool errors to prevent app crashes
+pool.on('error', (err) => {
+  // Handle different types of pool errors
+  if (err.code === 'XX000' || err.message?.includes('shutdown') || err.message?.includes('termination')) {
+    // Database connection termination - this is usually recoverable
+    console.warn('Database connection terminated, pool will create new connection:', err.message);
+    // Don't crash - the pool will handle reconnection
+  } else {
+    // Other pool errors
+    console.error('Unexpected error on idle database client:', {
+      message: err.message,
+      code: err.code,
+      severity: err.severity
+    });
+  }
+  // IMPORTANT: Don't throw or crash - just log
+  // The pool will handle reconnection automatically
+});
+
+pool.on('connect', (client) => {
+  // Connection established successfully
+  // Optional: Set up connection-level error handlers
+  client.on('error', (err) => {
+    // Handle client-level errors
+    if (err.code === 'XX000' || err.message?.includes('shutdown') || err.message?.includes('termination')) {
+      console.warn('Client connection error (will be removed from pool):', err.message);
+    } else {
+      console.error('Client connection error:', err.message);
+    }
+  });
+});
+
+pool.on('remove', (client) => {
+  // Connection removed from pool (normal cleanup)
+});
+
 export async function query(text, params) {
   const start = Date.now();
-  const res = await pool.query(text, params);
-  const duration = Date.now() - start;
-  if (config.nodeEnv !== 'test') {
-    console.log('executed query', { text, duration, rows: res.rowCount });
+  try {
+    const res = await pool.query(text, params);
+    const duration = Date.now() - start;
+    if (config.nodeEnv !== 'test') {
+      console.log('executed query', { text, duration, rows: res.rowCount });
+    }
+    return res;
+  } catch (err) {
+    const duration = Date.now() - start;
+    console.error('Query error:', { text, duration, error: err.message, code: err.code });
+    throw err;
   }
-  return res;
 }

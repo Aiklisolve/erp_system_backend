@@ -38,6 +38,8 @@ export function errorHandler(err, req, res, next) {
 
   // Send error response as JSON (only if headers not sent)
   if (!res.headersSent) {
+    // Ensure Content-Type is set to JSON
+    res.setHeader('Content-Type', 'application/json');
     res.status(status).json({
       success: false,
       message: status === 500 

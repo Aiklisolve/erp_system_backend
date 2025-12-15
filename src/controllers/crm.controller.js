@@ -89,6 +89,9 @@ export async function listErpUsers(req, res, next) {
       idx++;
     }
 
+    // Always filter out soft-deleted records
+    conditions.push(`(deleted_flag IS NULL OR deleted_flag = false)`);
+    
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const dataRes = await query(
@@ -143,6 +146,9 @@ export async function listManagers(req, res, next) {
     conditions.push(`eu.is_active = $${idx}`);
     params.push(true);
     idx++;
+
+    // Filter out soft-deleted records
+    conditions.push(`(eu.deleted_flag IS NULL OR eu.deleted_flag = false)`);
 
     if (search) {
       conditions.push(`(eu.first_name ILIKE $${idx} OR eu.last_name ILIKE $${idx} OR eu.email ILIKE $${idx} OR eu.employee_number ILIKE $${idx})`);
@@ -469,8 +475,8 @@ export async function getErpUserById(req, res, next) {
         e.bank_ifsc,
         e.manager_id
       FROM erp_users eu
-      LEFT JOIN employees e ON e.employee_id = eu.employee_number
-      WHERE eu.id = $1
+      LEFT JOIN employees e ON e.employee_id = eu.employee_number AND (e.deleted_flag IS NULL OR e.deleted_flag = false)
+      WHERE eu.id = $1 AND (eu.deleted_flag IS NULL OR eu.deleted_flag = false)
       `,
       [id]
     );
@@ -529,9 +535,9 @@ export async function updateErpUser(req, res, next) {
     const { id } = req.params;
     const body = req.body;
 
-    // Check if user exists and get employee_number
+    // Check if user exists and get employee_number (exclude soft-deleted records)
     const existingUser = await query(
-      `SELECT * FROM erp_users WHERE id = $1`,
+      `SELECT * FROM erp_users WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [id]
     );
 
@@ -689,7 +695,7 @@ export async function updateErpUser(req, res, next) {
       }
     }
 
-    // Update erp_users table if there are changes
+    // Update erp_users table if there are changes (only if not soft-deleted)
     if (erpUserUpdates.length > 0) {
       erpUserUpdates.push(`updated_at = NOW()`);
       erpUserValues.push(id);
@@ -698,13 +704,13 @@ export async function updateErpUser(req, res, next) {
         `
         UPDATE erp_users
         SET ${erpUserUpdates.join(', ')}
-        WHERE id = $${erpParamIdx}
+        WHERE id = $${erpParamIdx} AND (deleted_flag IS NULL OR deleted_flag = false)
         `,
         erpUserValues
       );
     }
 
-    // Update employees table if there are changes
+    // Update employees table if there are changes (only if not soft-deleted)
     if (employeeUpdates.length > 0) {
       employeeUpdates.push(`updated_at = NOW()`);
       employeeValues.push(employeeNumber);
@@ -713,7 +719,7 @@ export async function updateErpUser(req, res, next) {
         `
         UPDATE employees
         SET ${employeeUpdates.join(', ')}
-        WHERE employee_id = $${empParamIdx}
+        WHERE employee_id = $${empParamIdx} AND (deleted_flag IS NULL OR deleted_flag = false)
         `,
         employeeValues
       );
@@ -846,9 +852,9 @@ export async function deleteErpUser(req, res, next) {
   try {
     const { id } = req.params;
     
-    // Check if user exists and get employee_number
+    // Check if user exists and is not already deleted
     const existingUser = await query(
-      `SELECT id, employee_number FROM erp_users WHERE id = $1`,
+      `SELECT id, employee_number FROM erp_users WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [id]
     );
 
@@ -861,21 +867,53 @@ export async function deleteErpUser(req, res, next) {
 
     const employeeNumber = existingUser.rows[0].employee_number;
 
-    // Delete in order to respect foreign key constraints:
-    // 1. Delete from users table first (references erp_users via erp_user_id)
-    await query(`DELETE FROM users WHERE erp_user_id = $1`, [id]);
+    // Get the user ID from users table that references this erp_user
+    const userCheck = await query(
+      `SELECT id FROM users WHERE erp_user_id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
+      [id]
+    );
+    const userId = userCheck.rows.length > 0 ? userCheck.rows[0].id : null;
+
+    // Soft delete: Set deleted_flag = true in users table
+    if (userId) {
+      await query(`UPDATE users SET deleted_flag = true, updated_at = NOW() WHERE id = $1`, [userId]);
+      console.log(`Soft deleted user with id: ${userId}`);
+    }
     
-    // 2. Delete from erp_users (references employees via employee_number)
-    await query(`DELETE FROM erp_users WHERE id = $1`, [id]);
+    // Soft delete: Set deleted_flag = true in erp_users table
+    await query(`UPDATE erp_users SET deleted_flag = true, updated_at = NOW() WHERE id = $1`, [id]);
+    console.log(`Soft deleted erp_user with id: ${id}`);
     
-    // 3. Delete from employees table using employee_number
-    await query(`DELETE FROM employees WHERE employee_id = $1`, [employeeNumber]);
+    // Soft delete: Set deleted_flag = true in employees table using employee_number
+    try {
+      await query(`UPDATE employees SET deleted_flag = true, updated_at = NOW() WHERE employee_id = $1`, [employeeNumber]);
+      console.log(`Soft deleted employee with employee_id: ${employeeNumber}`);
+    } catch (err) {
+      // If employees update fails, log but don't fail (employee might not exist)
+      console.warn('Warning: Could not soft delete from employees table:', err.message);
+    }
     
     return res.json({
-      message: 'ERP user, associated user, and employee deleted successfully'
+      success: true,
+      message: 'ERP user deleted successfully'
     });
   } catch (err) {
     console.error('Error in deleteErpUser:', err);
+    
+    // Don't send response if headers already sent
+    if (res.headersSent) {
+      return;
+    }
+    
+    // Handle database connection errors
+    if (err.code === 'XX000' || err.message?.includes('shutdown') || err.message?.includes('termination')) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection error. Please try again later.',
+        error: 'DATABASE_CONNECTION_ERROR'
+      });
+    }
+    
     next(err);
   }
 }
@@ -900,6 +938,9 @@ export async function listCustomers(req, res, next) {
       params.push(segment);
       idx++;
     }
+
+    // Always filter out soft-deleted records
+    conditions.push(`(deleted_flag IS NULL OR deleted_flag = false)`);
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -937,7 +978,7 @@ export async function getCustomerById(req, res, next) {
   try {
     const { id } = req.params;
     const result = await query(
-      `SELECT * FROM customers WHERE id = $1`,
+      `SELECT * FROM customers WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [id]
     );
 
@@ -1028,9 +1069,9 @@ export async function updateCustomer(req, res, next) {
     const { id } = req.params;
     const body = req.body;
 
-    // Check if customer exists
+    // Check if customer exists and is not soft-deleted
     const existingCustomer = await query(
-      `SELECT * FROM customers WHERE id = $1`,
+      `SELECT * FROM customers WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
       [id]
     );
 
@@ -1081,7 +1122,7 @@ export async function updateCustomer(req, res, next) {
       `
       UPDATE customers
       SET ${updates.join(', ')}
-      WHERE id = $${paramIdx}
+      WHERE id = $${paramIdx} AND (deleted_flag IS NULL OR deleted_flag = false)
       RETURNING *
       `,
       values
@@ -1104,7 +1145,26 @@ export async function updateCustomer(req, res, next) {
 export async function deleteCustomer(req, res, next) {
   try {
     const { id } = req.params;
-    await query(`DELETE FROM customers WHERE id = $1`, [id]);
+    
+    // Check if customer exists and is not already deleted
+    const existingCustomer = await query(
+      `SELECT id FROM customers WHERE id = $1 AND (deleted_flag IS NULL OR deleted_flag = false)`,
+      [id]
+    );
+
+    if (existingCustomer.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+
+    // Soft delete: Set deleted_flag = true
+    await query(
+      `UPDATE customers SET deleted_flag = true, updated_at = NOW() WHERE id = $1`,
+      [id]
+    );
+    
     return res.json({
       success: true,
       message: 'Customer deleted successfully'

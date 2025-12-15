@@ -4,6 +4,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { config } from './config/env.js';
 import { httpLogger } from './middleware/logger.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 // Core routes
 import authRoutes from './routes/auth.routes.js';
@@ -78,5 +79,18 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// 404 handler - MUST be before error handler
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.method} ${req.originalUrl}`,
+    error_code: 'NOT_FOUND',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Error handler middleware - MUST be last
+app.use(errorHandler);
 
 export default app;

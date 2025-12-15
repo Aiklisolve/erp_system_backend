@@ -31,6 +31,13 @@ router.get(
   hrController.getEmployeeByEmployeeId
 );
 
+// Get managers for dropdown (employees with position = 'Manager')
+router.get(
+  '/managers',
+  authorize('ADMIN', 'HR_MANAGER', 'MANAGER'),
+  hrController.listManagers
+);
+
 // Create employee
 router.post(
   '/employees',

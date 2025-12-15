@@ -139,11 +139,11 @@ export async function createSalesOrder(req, res, next) {
 
     // If customer is provided as string but no customer_id, try to find or create customer
     if (body.customer && !customerId && (body.customer_email || body.customer_phone)) {
-      // Try to find existing customer by email or phone
+      // Try to find existing customer by email or phone (exclude deleted)
       const customerRes = await query(
         `
         SELECT id, name FROM customers 
-        WHERE email = $1 OR phone = $2 
+        WHERE (email = $1 OR phone = $2) AND (deleted_flag IS NULL OR deleted_flag = false)
         LIMIT 1
         `,
         [body.customer_email || '', body.customer_phone || '']
@@ -253,11 +253,11 @@ export async function updateSalesOrder(req, res, next) {
     let customerId = body.customer_id;
     
     if (body.customer && customerId === undefined && (body.customer_email || body.customer_phone)) {
-      // Try to find existing customer by email or phone
+      // Try to find existing customer by email or phone (exclude deleted)
       const customerRes = await query(
         `
         SELECT id, name FROM customers 
-        WHERE email = $1 OR phone = $2 
+        WHERE (email = $1 OR phone = $2) AND (deleted_flag IS NULL OR deleted_flag = false)
         LIMIT 1
         `,
         [body.customer_email || '', body.customer_phone || '']
