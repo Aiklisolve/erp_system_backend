@@ -238,7 +238,8 @@ export async function updateProductionOrder(req, res, next) {
       shift,
       supervisor_id,
       quality_status,
-      notes
+      notes,
+      cost
     } = req.body;
 
     // Map alternative field names
@@ -265,8 +266,9 @@ export async function updateProductionOrder(req, res, next) {
         supervisor_id               = COALESCE($12, supervisor_id),
         quality_status              = COALESCE($13, quality_status),
         notes                       = COALESCE($14, notes),
+        cost                        = COALESCE($15, cost),
         updated_at                  = NOW()
-      WHERE id = $15
+      WHERE id = $16
       RETURNING *
       `,
       [
@@ -284,6 +286,7 @@ export async function updateProductionOrder(req, res, next) {
         supervisor_id,
         quality_status,
         notes,
+        cost,
         id
       ]
     );
