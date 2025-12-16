@@ -17,32 +17,32 @@ export async function listPurchaseOrders(req, res, next) {
     let idx = 1;
 
     if (status) {
-      conditions.push(`status = $${idx}`);
+      conditions.push(`po.status = $${idx}`);
       params.push(status);
       idx++;
     }
 
     if (supplier_id) {
-      conditions.push(`supplier_id = $${idx}`);
+      conditions.push(`po.supplier_id = $${idx}`);
       params.push(supplier_id);
       idx++;
     }
 
     if (from_date) {
-      conditions.push(`order_date >= $${idx}`);
+      conditions.push(`po.order_date >= $${idx}`);
       params.push(from_date);
       idx++;
     }
 
     if (to_date) {
-      conditions.push(`order_date <= $${idx}`);
+      conditions.push(`po.order_date <= $${idx}`);
       params.push(to_date);
       idx++;
     }
 
     if (search) {
       conditions.push(
-        `(po_number ILIKE $${idx} OR notes ILIKE $${idx})`
+        `(po.po_number ILIKE $${idx} OR po.notes ILIKE $${idx})`
       );
       params.push(`%${search}%`);
       idx++;
@@ -54,10 +54,14 @@ export async function listPurchaseOrders(req, res, next) {
       `
       SELECT 
         po.*,
-        v.vendor_name as supplier_name
+        v.vendor_name as supplier_name,
+        COALESCE(SUM(poi.quantity), 0)::numeric as total_quantity,
+        COALESCE(SUM(COALESCE(poi.received_quantity, 0)), 0)::numeric as received_quantity
       FROM purchase_orders po
       LEFT JOIN vendors v ON po.supplier_id = v.id
+      LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
       ${where}
+      GROUP BY po.id, v.vendor_name
       ORDER BY po.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
       `,
@@ -66,8 +70,9 @@ export async function listPurchaseOrders(req, res, next) {
 
     const countRes = await query(
       `
-      SELECT COUNT(*)::int AS count
+      SELECT COUNT(DISTINCT po.id)::int AS count
       FROM purchase_orders po
+      LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id
       ${where}
       `,
       params
@@ -75,10 +80,17 @@ export async function listPurchaseOrders(req, res, next) {
 
     const total = countRes.rows[0]?.count || 0;
 
+    // Ensure total_quantity and received_quantity are numbers
+    const purchaseOrders = dataRes.rows.map(po => ({
+      ...po,
+      total_quantity: po.total_quantity ? parseFloat(po.total_quantity) : 0,
+      received_quantity: po.received_quantity ? parseFloat(po.received_quantity) : 0
+    }));
+
     return res.json({
       success: true,
       data: {
-        purchase_orders: dataRes.rows,
+        purchase_orders: purchaseOrders,
         pagination: buildPaginationMeta(page, limit, total)
       }
     });
